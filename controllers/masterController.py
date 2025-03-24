@@ -58,6 +58,11 @@ class MasterData(http.Controller):
                 "manual_quantity_pack": user_permissions.manual_quantity_pack,
                 "manual_spring_selection_pack": user_permissions.manual_spring_selection_pack,
                 "scan_product": user_permissions.scan_product,
+                "allow_move_excess": user_permissions.allow_move_excess,
+                "hide_expected_qty": user_permissions.hide_expected_qty,
+                "manual_product_reading": user_permissions.manual_product_reading,
+                "manual_source_location": user_permissions.manual_source_location,
+                "show_owner_field": user_permissions.show_owner_field,
             }
 
             return {"code": 200, "result": response_data}
@@ -483,16 +488,39 @@ class MasterData(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": "Error inesperado: {}".format(str(err))}
 
-    @http.route("/api_app/api_app/objects", auth="public")
-    def list(self, **kw):
-        return http.request.render(
-            "api_app.listing",
-            {
-                "root": "/api_app/api_app",
-                "objects": http.request.env["api_app.api_app"].search([]),
-            },
-        )
+    ## POST Update tiempo de recepcion
+    @http.route("/api/update_time_reception", auth="user", type="json", methods=["POST"])
+    def post_reception_start_time(self, reception_id, time, field_name):
+        try:
+            # Buscar la recepción
+            reception = request.env["stock.picking"].sudo().search([("id", "=", reception_id)], limit=1)
 
-    @http.route('/api_app/api_app/objects/<model("api_app.api_app"):obj>', auth="public")
-    def object(self, obj, **kw):
-        return http.request.render("api_app.object", {"object": obj})
+            if not reception:
+                return {"code": 404, "msg": "No se encontró la recepción con el ID proporcionado"}
+
+            # Validar start_time
+            if not time:
+                return {"code": 400, "msg": "El tiempo 'start_time' es requerido"}
+
+            # Convertir start_time a datetime para validaciones
+            try:
+                start_time_dt = datetime.strptime(time, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return {"code": 400, "msg": "Formato de start_time inválido. Debe ser 'YYYY-MM-DD HH:MM:SS'"}
+
+            # Validar que el start_time no sea en el futuro
+            # if start_time_dt > datetime.now():
+            #     return {"code": 400, "msg": "start_time no puede ser en el futuro"}
+
+            # Guardar start_time
+            reception.sudo().write({field_name: start_time_dt})
+
+            if "start" in field_name:
+                return {"code": 200, "msg": "Tiempo de inicio actualizado correctamente"}
+            else:
+                return {"code": 200, "msg": "Tiempo de fin actualizado correctamente"}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 400, "msg": f"Error inesperado {str(err)}"}
