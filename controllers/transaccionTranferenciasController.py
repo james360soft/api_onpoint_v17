@@ -488,7 +488,6 @@ class TransaccionTransferenciasController(http.Controller):
             list_items = auth.get("list_items", [])
 
             transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)])
-
             if not transferencia:
                 return {"code": 404, "msg": "Transferencia no encontrada"}
 
@@ -507,37 +506,26 @@ class TransaccionTransferenciasController(http.Controller):
                 novedad = item.get("observacion", "")
                 dividida = item.get("dividida", False)
 
-                # Buscar movimiento original
                 original_move = request.env["stock.move.line"].sudo().search([("id", "=", id_move)])
                 if not original_move:
                     return {"code": 404, "msg": f"Movimiento no encontrado (ID: {id_move})"}
 
                 move_parent = original_move.move_id
-
-                # Buscar producto
                 product = request.env["product.product"].sudo().search([("id", "=", id_product)])
 
                 if product.tracking == "lot" and not id_lote:
                     return {"code": 400, "msg": "El producto requiere lote y no se ha proporcionado uno"}
 
-                # Validar cantidad total enviada
-                move_lines = request.env["stock.move.line"].sudo().search([("move_id", "=", move_parent.id)])
-                qty_total_enviada = sum(ml.quantity for ml in move_lines)
-
-                # if qty_total_enviada + cantidad_enviada > move_parent.product_uom_qty:
-                #     return {"code": 400, "msg": f"La cantidad total enviada ({qty_total_enviada + cantidad_enviada}) excede la cantidad reservada ({move_parent.product_uom_qty})"}
-
                 fecha = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
 
                 if dividida:
-                    # Crear nueva línea
                     new_move_values = {
                         "move_id": move_parent.id,
                         "product_id": id_product,
                         "product_uom_id": original_move.product_uom_id.id,
                         "location_id": id_ubicacion_origen,
                         "location_dest_id": id_ubicacion_destino,
-                        "quantity": cantidad_enviada,
+                        "quantity": cantidad_enviada,  # ← Odoo 17 usa este
                         "lot_id": id_lote if id_lote else False,
                         "is_done_item": True,
                         "date_transaction": fecha,
@@ -554,7 +542,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "id_move": new_move.id,
                             "id_transferencia": id_transferencia,
                             "id_product": new_move.product_id.id,
-                            "qty_done": new_move.quantity,
+                            "quantity": new_move.quantity,
                             "is_done_item": new_move.is_done_item,
                             "date_transaction": new_move.date_transaction,
                             "new_observation": new_move.new_observation,
@@ -563,12 +551,8 @@ class TransaccionTransferenciasController(http.Controller):
                         }
                     )
                 else:
-                    # Validar que la línea original no esté ya usada
-                    # if original_move.qty_done > 0:
-                    #     return {"code": 400, "msg": f"La línea original (ID: {id_move}) ya fue procesada"}
-
                     update_values = {
-                        "quantity": cantidad_enviada,
+                        "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
                         "location_dest_id": id_ubicacion_destino,
                         "location_id": id_ubicacion_origen,
                         "lot_id": id_lote if id_lote else False,
@@ -579,14 +563,14 @@ class TransaccionTransferenciasController(http.Controller):
                         "user_operator_id": id_operario,
                     }
 
-                    original_move.write(update_values)
+                    original_move.sudo().write(update_values)
 
                     array_result.append(
                         {
                             "id_move": original_move.id,
                             "id_transferencia": id_transferencia,
                             "id_product": original_move.product_id.id,
-                            "qty_done": original_move.quantity,
+                            "quantity": original_move.quantity,
                             "is_done_item": original_move.is_done_item,
                             "date_transaction": original_move.date_transaction,
                             "new_observation": original_move.new_observation,
@@ -615,12 +599,7 @@ class TransaccionTransferenciasController(http.Controller):
             crear_backorder = auth.get("crear_backorder", True)
 
             # ✅ Buscar transferencia por ID
-            transferencia = request.env["stock.picking"].sudo().search([
-                ("id", "=", id_transferencia),
-                ("picking_type_code", "=", "internal"),
-                ("picking_type_id.sequence_code", "=", "INT"),
-                ("state", "=", "assigned")
-            ], limit=1)
+            transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia), ("picking_type_code", "=", "internal"), ("picking_type_id.sequence_code", "=", "INT"), ("state", "=", "assigned")], limit=1)
 
             if not transferencia:
                 return {"code": 404, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
@@ -638,51 +617,29 @@ class TransaccionTransferenciasController(http.Controller):
 
                 # 🟨 1. Backorder Wizard
                 if wizard_model == "stock.backorder.confirmation":
-                    wizard_vals = {
-                        "pick_ids": [(6, 0, [transferencia.id])],
-                        "show_transfers": wizard_context.get("default_show_transfers", False)
-                    }
+                    wizard_vals = {"pick_ids": [(6, 0, [transferencia.id])], "show_transfers": wizard_context.get("default_show_transfers", False)}
                     wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
 
                     transferencia.sudo()._action_done()
 
                     # Verificar si se creó una backorder
-                    backorder = request.env["stock.picking"].sudo().search([
-                        ("backorder_id", "=", transferencia.id),
-                        ("state", "not in", ["done", "cancel"])
-                    ], limit=1)
+                    backorder = request.env["stock.picking"].sudo().search([("backorder_id", "=", transferencia.id), ("state", "not in", ["done", "cancel"])], limit=1)
 
-                    return {
-                        "code": 200,
-                        "msg": "Transferencia procesada con backorder",
-                        "original_id": transferencia.id,
-                        "original_state": transferencia.state,
-                        "backorder_id": backorder.id if backorder else False
-                    }
+                    return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
 
                 # 🟨 2. Transferencia inmediata
                 elif wizard_model == "stock.immediate.transfer":
                     wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({})
                     transferencia.sudo()._action_done()
 
-                    return {
-                        "code": 200,
-                        "msg": "Transferencia completada con éxito",
-                        "original_id": transferencia.id,
-                        "original_state": transferencia.state
-                    }
+                    return {"code": 200, "msg": "Transferencia completada con éxito", "original_id": transferencia.id, "original_state": transferencia.state}
 
                 # 🟨 3. Confirmación por caducidad
                 elif wizard_model == "expiry.picking.confirmation":
                     wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({})
                     wizard.sudo().process()
 
-                    return {
-                        "code": 200,
-                        "msg": "Transferencia completada con confirmación de caducidad",
-                        "original_id": transferencia.id,
-                        "original_state": transferencia.state
-                    }
+                    return {"code": 200, "msg": "Transferencia completada con confirmación de caducidad", "original_id": transferencia.id, "original_state": transferencia.state}
 
                 # 🚫 Otro wizard no soportado
                 else:
@@ -690,18 +647,12 @@ class TransaccionTransferenciasController(http.Controller):
 
             elif isinstance(result, bool) and result:
                 # ✅ Transferencia completada directamente sin wizard
-                return {
-                    "code": 200,
-                    "msg": "Transferencia completada directamente",
-                    "original_id": transferencia.id,
-                    "original_state": transferencia.state
-                }
+                return {"code": 200, "msg": "Transferencia completada directamente", "original_id": transferencia.id, "original_state": transferencia.state}
             else:
                 return {"code": 400, "msg": f"No se pudo completar la transferencia: {result}"}
 
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
-
 
     ## POST Comprobación de disponibilidad de transferencia
     @http.route("/api/comprobar_disponibilidad", auth="user", type="json", methods=["POST"], csrf=False)

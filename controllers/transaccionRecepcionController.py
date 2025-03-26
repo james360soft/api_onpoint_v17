@@ -3,6 +3,7 @@ from odoo.http import request
 from odoo.exceptions import AccessError
 from datetime import datetime, timedelta
 import pytz
+from datetime import date
 
 
 class TransaccionRecepcionController(http.Controller):
@@ -490,46 +491,90 @@ class TransaccionRecepcionController(http.Controller):
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
     ## GET Obtener todos los lotes de un producto
+    # @http.route("/api/lotes/<int:id_producto>", auth="user", type="json", methods=["GET"])
+    # def get_lotes(self, id_producto):
+    #     try:
+    #         user = request.env.user
+
+    #         # ✅ Validar usuario
+    #         if not user:
+    #             return {"code": 400, "msg": "Usuario no encontrado"}
+
+    #         # ✅ Validar ID de producto
+    #         if not id_producto:
+    #             return {"code": 400, "msg": "ID de producto no válido"}
+
+    #         # ✅ Buscar producto por ID
+    #         product = request.env["product.product"].sudo().search([("id", "=", id_producto)], limit=1)
+
+    #         # ✅ Validar producto
+    #         if not product:
+    #             return {"code": 400, "msg": "Producto no encontrado"}
+
+    #         # ✅ Verificar si el producto tiene seguimiento por lotes
+    #         if product.tracking != "lot":
+    #             return {"code": 400, "msg": "El producto no tiene seguimiento por lotes"}
+
+    #         # ✅ Obtener todos los lotes del producto
+    #         # En Odoo 17, usamos stock.lot en lugar de stock.production.lot
+    #         lotes = request.env["stock.lot"].sudo().search([("product_id", "=", id_producto)])
+
+    #         array_lotes = []
+
+    #         for lote in lotes:
+    #             # Adaptación para Odoo 17 - cambios en los nombres de campos
+    #             array_lotes.append(
+    #                 {
+    #                     "id": lote.id,
+    #                     "name": lote.name,
+    #                     "quantity": lote.product_qty,  # Sigue siendo product_qty en Odoo 17
+    #                     # Campos de fechas actualizados para Odoo 17
+    #                     "expiration_date": lote.expiration_date,
+    #                     "removal_date": lote.removal_date,  # Reemplaza alert_date
+    #                     "use_date": lote.use_date,
+    #                     "product_id": lote.product_id.id,
+    #                     "product_name": lote.product_id.name,
+    #                 }
+    #             )
+
+    #         return {"code": 200, "result": array_lotes}
+
+    #     except Exception as e:
+    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
     @http.route("/api/lotes/<int:id_producto>", auth="user", type="json", methods=["GET"])
     def get_lotes(self, id_producto):
         try:
             user = request.env.user
 
-            # ✅ Validar usuario
             if not user:
                 return {"code": 400, "msg": "Usuario no encontrado"}
 
-            # ✅ Validar ID de producto
             if not id_producto:
                 return {"code": 400, "msg": "ID de producto no válido"}
 
-            # ✅ Buscar producto por ID
             product = request.env["product.product"].sudo().search([("id", "=", id_producto)], limit=1)
 
-            # ✅ Validar producto
             if not product:
                 return {"code": 400, "msg": "Producto no encontrado"}
 
-            # ✅ Verificar si el producto tiene seguimiento por lotes
             if product.tracking != "lot":
                 return {"code": 400, "msg": "El producto no tiene seguimiento por lotes"}
 
-            # ✅ Obtener todos los lotes del producto
-            # En Odoo 17, usamos stock.lot en lugar de stock.production.lot
-            lotes = request.env["stock.lot"].sudo().search([("product_id", "=", id_producto)])
+            # 🟡 Filtrar solo lotes que NO estén vencidos
+            today = date.today()
+            lotes = request.env["stock.lot"].sudo().search([("product_id", "=", id_producto), "|", ("expiration_date", "=", False), ("expiration_date", ">", today)])  # No tiene fecha de caducidad  # Fecha de caducidad futura
 
             array_lotes = []
 
             for lote in lotes:
-                # Adaptación para Odoo 17 - cambios en los nombres de campos
                 array_lotes.append(
                     {
                         "id": lote.id,
                         "name": lote.name,
-                        "quantity": lote.product_qty,  # Sigue siendo product_qty en Odoo 17
-                        # Campos de fechas actualizados para Odoo 17
+                        "quantity": lote.product_qty,
                         "expiration_date": lote.expiration_date,
-                        "removal_date": lote.removal_date,  # Reemplaza alert_date
+                        "removal_date": lote.removal_date,
                         "use_date": lote.use_date,
                         "product_id": lote.product_id.id,
                         "product_name": lote.product_id.name,
