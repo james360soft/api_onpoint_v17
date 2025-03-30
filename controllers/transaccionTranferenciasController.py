@@ -712,7 +712,7 @@ class TransaccionTransferenciasController(http.Controller):
 
             # Buscar PRODUCTO por lote
             if not product:
-                lot = request.env["stock.production.lot"].sudo().search([("name", "=", barcode)], limit=1)
+                lot = request.env["stock.lot"].sudo().search([("name", "=", barcode)], limit=1)
                 if lot:
                     product = lot.product_id
 
@@ -791,8 +791,8 @@ class TransaccionTransferenciasController(http.Controller):
                             "producto": prod.display_name,
                             "cantidad": 0.0,
                             "codigo_barras": prod.barcode,
-                            "lot_id": quant.lot_id.id if quant.lot_id else 0,
                             "lote": quant.lot_id.name if quant.lot_id else "",
+                            "lote_id": quant.lot_id.id if quant.lot_id else 0,
                             "id_almacen": location.warehouse_id.id if location.warehouse_id else 0,
                             "nombre_almacen": location.warehouse_id.name if location.warehouse_id else "",
                         }
@@ -819,6 +819,134 @@ class TransaccionTransferenciasController(http.Controller):
 
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
+    @http.route("/api/crear_transferencia", auth="user", type="json", methods=["POST"], csrf=False)
+    def crear_transferencia(self, **auth):
+        try:
+            user = request.env.user
+
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            # Parámetros
+            id_almacen = auth.get("id_almacen", 0)
+            id_ubicacion_destino = auth.get("id_ubicacion_destino", 0)
+            id_ubicacion_origen = auth.get("id_ubicacion_origen", 0)
+            id_responsable = auth.get("id_operario", 0)
+            id_producto = auth.get("id_producto", 0)
+            cantidad_enviada = float(auth.get("cantidad_enviada", 0))
+            id_lote = auth.get("id_lote") or False
+            fecha_transaccion = auth.get("fecha_transaccion", "")
+            observacion = auth.get("observacion", "")
+            time_line = auth.get("time_line", 0)
+
+            # Validaciones
+            if not (id_almacen and id_ubicacion_destino and id_ubicacion_origen):
+                return {"code": 400, "msg": "Faltan parámetros de ubicación"}
+
+            if not id_producto or cantidad_enviada <= 0:
+                return {"code": 400, "msg": "Cantidad o producto inválido"}
+
+            product = request.env["product.product"].sudo().browse(id_producto)
+            if not product.exists():
+                return {"code": 404, "msg": "Producto no encontrado"}
+
+            available_stock = product.with_context(location=id_ubicacion_origen).qty_available
+            if available_stock < cantidad_enviada:
+                return {"code": 400, "msg": f"Stock insuficiente en origen. Disponible: {available_stock}"}
+
+            # Buscar tipo de picking interno
+            picking_type = request.env["stock.picking.type"].sudo().search([("warehouse_id", "=", id_almacen), ("code", "=", "internal")], limit=1)
+
+            if not picking_type:
+                return {"code": 404, "msg": "Tipo de picking interno no encontrado"}
+
+            # Crear Picking
+            picking = (
+                request.env["stock.picking"]
+                .sudo()
+                .create(
+                    {
+                        "picking_type_id": picking_type.id,
+                        "location_id": id_ubicacion_origen,
+                        "location_dest_id": id_ubicacion_destino,
+                        "user_id": id_responsable,
+                        "origin": f"Transferencia creada por {user.name}",
+                    }
+                )
+            )
+
+            # Crear movimiento
+            move = (
+                request.env["stock.move"]
+                .sudo()
+                .create(
+                    {
+                        "name": product.display_name,
+                        "product_id": product.id,
+                        "product_uom_qty": cantidad_enviada,
+                        "product_uom": product.uom_id.id,
+                        "location_id": id_ubicacion_origen,
+                        "location_dest_id": id_ubicacion_destino,
+                        "picking_id": picking.id,
+                    }
+                )
+            )
+
+            # Confirmar y asignar
+            picking.action_confirm()
+            picking.action_assign()
+
+            move_line = move.move_line_ids and move.move_line_ids[0] or False
+
+            if move_line:
+                move_line_vals = {
+                    "user_operator_id": id_responsable or user.id,
+                    "new_observation": observacion,
+                    "is_done_item": True,
+                    "time": time_line,
+                    "date_transaction": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
+                    "quantity": cantidad_enviada,
+                }
+
+                if id_lote:
+                    move_line_vals["lot_id"] = id_lote
+
+                move_line.sudo().write(move_line_vals)
+
+            # Validar
+            try:
+                picking.button_validate()
+            except Exception as e:
+                return {"code": 400, "msg": f"Error en validación del picking: {str(e)}"}
+
+            return {
+                "code": 200,
+                "msg": "Transferencia creada y validada correctamente",
+                "transferencia_id": picking.id,
+                "nombre_transferencia": picking.name,
+                "linea_id": move_line.id if move_line else 0,
+                "cantidad_enviada": move_line.quantity if move_line else cantidad_enviada,
+                "id_producto": product.id,
+                "nombre_producto": product.display_name,
+                "ubicacion_origen": move_line.location_id.name if move_line else "",
+                "ubicacion_destino": move_line.location_dest_id.name if move_line else "",
+                "fecha_transaccion": move_line.date_transaction if hasattr(move_line, "date_transaction") else "",
+                "observacion": move_line.new_observation if hasattr(move_line, "new_observation") else "",
+                "time_line": move_line.time if hasattr(move_line, "time") else 0,
+                "user_operator_id": move_line.user_operator_id.id if hasattr(move_line, "user_operator_id") else 0,
+                "user_operator_name": move_line.user_operator_id.name if hasattr(move_line, "user_operator_id") else "",
+                "id_lote": move_line.lot_id.id if move_line and move_line.lot_id else 0,
+                "available_stock": available_stock,
+                "cantidad_disponible": product.qty_available,
+                "ubicacion_origen_id": id_ubicacion_origen,
+                "ubicacion_destino_id": id_ubicacion_destino,
+            }
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 500, "msg": f"Error inesperado: {str(err)}"}
 
 
 def procesar_fecha_naive(fecha_transaccion, zona_horaria_cliente):
