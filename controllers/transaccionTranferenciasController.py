@@ -147,8 +147,8 @@ class TransaccionTransferenciasController(http.Controller):
                             "weight": product.weight or 0,
                             "is_done_item": move_line.is_done_item,
                             "date_transaction": move_line.date_transaction or "",
-                            "new_observation": move_line.new_observation or "",
-                            "time_line": move_line.time or 0,
+                            "observation": move_line.new_observation or "",
+                            "time": move_line.time or 0,
                             "user_operator_id": move_line.user_operator_id.id or 0,
                         }
 
@@ -682,6 +682,140 @@ class TransaccionTransferenciasController(http.Controller):
                 "picking_id": picking.id,
                 "state": picking.state,
             }
+
+        except Exception as e:
+            return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
+    ## GET INFORMACION RAPIDA
+    @http.route("/api/transferencias/quickinfo", auth="user", type="json", methods=["GET"])
+    def get_quick_info(self, **kwargs):
+        try:
+
+            user = request.env.user
+
+            # ✅ Validar usuario
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            barcode = kwargs.get("barcode")
+            if not barcode:
+                return {"code": 400, "msg": "Código de barras no proporcionado"}
+
+            # Buscar PRODUCTO por barcode directo
+            product = request.env["product.product"].sudo().search([("barcode", "=", barcode)], limit=1)
+
+            # Buscar PRODUCTO por paquete
+            if not product:
+                packaging = request.env["product.packaging"].sudo().search([("barcode", "=", barcode)], limit=1)
+                if packaging:
+                    product = packaging.product_id
+
+            # Buscar PRODUCTO por lote
+            if not product:
+                lot = request.env["stock.production.lot"].sudo().search([("name", "=", barcode)], limit=1)
+                if lot:
+                    product = lot.product_id
+
+            # Obtener almacenes del usuario
+            allowed_warehouses = obtener_almacenes_usuario(user)
+
+            # Verificar si es un error (diccionario con código y mensaje)
+            if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
+                return allowed_warehouses  # Devolver el error directamente
+
+            # PRODUCTO encontrado
+            if product:
+                # CAMBIO PRINCIPAL: Buscar quants considerando TODOS los almacenes permitidos
+                quants = request.env["stock.quant"].sudo().search([("product_id", "=", product.id), ("available_quantity", ">", 0), ("location_id.usage", "=", "internal"), ("location_id.warehouse_id", "in", allowed_warehouses.ids)])
+
+                ubicaciones = []
+                for quant in quants:
+                    # Verificar que el almacén esté en los permitidos
+                    warehouse = request.env["stock.warehouse"].sudo().search([("id", "=", quant.location_id.warehouse_id.id), ("id", "in", allowed_warehouses.ids)], limit=1)
+
+                    if not warehouse:
+                        continue  # Saltar si no pertenece a un almacén del usuario
+
+                    ubicaciones.append(
+                        {
+                            "id_move": quant.id,
+                            "id_almacen": warehouse.id,
+                            "nombre_almacen": warehouse.name,
+                            "id_ubicacion": quant.location_id.id,
+                            "ubicacion": quant.location_id.complete_name or "",
+                            "cantidad": quant.available_quantity or 0,
+                            "reservado": quant.reserved_quantity or 0,
+                            "cantidad_mano": quant.quantity - quant.reserved_quantity,
+                            "codigo_barras": quant.location_id.barcode or "",
+                            "lote": quant.lot_id.name if quant.lot_id else "",
+                            "lote_id": quant.lot_id.id if quant.lot_id else 0,
+                            "fecha_eliminacion": quant.removal_date or "",
+                            "fecha_entrada": quant.in_date or "",
+                        }
+                    )
+
+                paquetes = product.packaging_ids.mapped("barcode")
+
+                return {
+                    "code": 200,
+                    "type": "product",
+                    "result": {
+                        "id": product.id,
+                        "nombre": product.display_name,
+                        "precio": product.lst_price,
+                        "cantidad_disponible": product.qty_available,
+                        "previsto": product.virtual_available,
+                        "referencia": product.default_code,
+                        "peso": product.weight,
+                        "volumen": product.volume,
+                        "codigo_barras": product.barcode,
+                        "codigos_barras_paquetes": paquetes,
+                        "imagen": product.image_128 and f"/web/image/product.product/{product.id}/image_128" or "",
+                        "categoria": product.categ_id.name,
+                        "ubicaciones": ubicaciones,
+                    },
+                }
+
+            # Buscar UBICACIÓN por código de barras
+            location = request.env["stock.location"].sudo().search([("barcode", "=", barcode), ("usage", "=", "internal")], limit=1)  # Solo internas
+
+            if location:
+                quants = request.env["stock.quant"].sudo().search([("location_id", "=", location.id), ("available_quantity", ">", 0)])
+
+                productos_dict = {}
+                for quant in quants:
+                    prod = quant.product_id
+                    if prod.id not in productos_dict:
+                        productos_dict[prod.id] = {
+                            "id": prod.id,
+                            "producto": prod.display_name,
+                            "cantidad": 0.0,
+                            "codigo_barras": prod.barcode,
+                            "lot_id": quant.lot_id.id if quant.lot_id else 0,
+                            "lote": quant.lot_id.name if quant.lot_id else "",
+                            "id_almacen": location.warehouse_id.id if location.warehouse_id else 0,
+                            "nombre_almacen": location.warehouse_id.name if location.warehouse_id else "",
+                        }
+                    productos_dict[prod.id]["cantidad"] += quant.available_quantity
+
+                productos = list(productos_dict.values())
+
+                return {
+                    "code": 200,
+                    "type": "ubicacion",
+                    "result": {
+                        "id": location.id,
+                        "id_almacen": location.warehouse_id.id if location.warehouse_id else 0,
+                        "nombre_almacen": location.warehouse_id.name if location.warehouse_id else "",
+                        "nombre": location.name,
+                        "ubicacion_padre": location.location_id.name if location.location_id else "",
+                        "tipo_ubicacion": location.usage,
+                        "codigo_barras": location.barcode,
+                        "productos": productos,
+                    },
+                }
+
+            return {"code": 404, "msg": "No se encontró producto, lote, paquete ni ubicación con ese código de barras"}
 
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
