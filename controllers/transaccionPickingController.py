@@ -259,7 +259,6 @@ class TransaccionDataPicking(http.Controller):
                 "is_wave": batch.is_wave,
                 "muelle": batch.location_id.display_name if batch.location_id else "SIN-MUELLE",
                 "id_muelle": batch.location_id.id if batch.location_id else "",
-                "barcode_muelle": batch.location_id.barcode or "",
                 "count_items": len(stock_moves),
                 "total_quantity_items": sum(move["product_uom_qty"] for move in stock_moves),
                 "items_separado": sum(move["qty_done"] for move in stock_moves),

@@ -9,232 +9,6 @@ import pytz
 class TransaccionDataPacking(http.Controller):
 
     ## GET Transacciones batchs para packing
-    # @http.route("/api/batch_packing", auth="user", type="json", methods=["GET"])
-    # def get_batch_packing(self):
-    #     try:
-    #         user = request.env.user
-    #         if not user:
-    #             return {"code": 401, "msg": "Usuario no autenticado"}
-
-    #         array_batch = []
-
-    #         # ✅ Verificar si el usuario tiene almacenes permitidos
-    #         allowed_warehouses = user.allowed_warehouse_ids
-    #         if not allowed_warehouses:
-    #             return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
-
-    #         # ✅ Iterar sobre los almacenes permitidos y procesar cada uno
-    #         for warehouse in allowed_warehouses:
-
-    #             # Obtener el campo `delivery_steps` del almacén
-    #             delivery_steps = warehouse.delivery_steps
-    #             if not delivery_steps:
-    #                 continue  # Saltar si no hay información sobre `delivery_steps`
-
-    #             # Determinar el `sequence_code` basado en los pasos de entrega
-    #             if delivery_steps == "ship_only":
-    #                 # 1 paso: Entregar bienes directamente
-    #                 sequence_code = "OUT"
-    #             elif delivery_steps == "pick_ship":
-    #                 # 2 pasos: Enviar bienes a ubicación de salida y entregar
-    #                 sequence_code = "OUT"
-    #             elif delivery_steps == "pick_pack_ship":
-    #                 # 3 pasos: Empaquetar, transferir bienes a ubicación de salida, y enviar
-    #                 sequence_code = "PACK"
-    #             else:
-    #                 continue  # Si no hay una coincidencia válida, saltar este almacén
-
-    #             # ✅ Obtener la estrategia de picking
-    #             picking_strategy = request.env["picking.strategy"].sudo().browse(1)
-
-    #             # ✅ Buscar lotes en progreso con secuencia "OUT"
-    #             batches = (
-    #                 request.env["stock.picking.batch"]
-    #                 .sudo()
-    #                 .search(
-    #                     [
-    #                         ("state", "=", "in_progress"),
-    #                         ("picking_type_id.sequence_code", "=", sequence_code),
-    #                         ("picking_type_id.warehouse_id", "=", warehouse.id),  # Filtro por almacén actual
-    #                     ]
-    #                 )
-    #             )
-
-    #             for batch in batches:
-    #                 if batch.move_line_ids:
-    #                     user_info = {
-    #                         "user_id": batch.user_id.id if batch.user_id else 0,
-    #                         "user_name": (batch.user_id.name if batch.user_id else "Desconocido"),
-    #                     }
-
-    #                     array_batch_temp = {
-    #                         "id": batch.id,
-    #                         "name": batch.name,
-    #                         "warehouse_id": warehouse.id,
-    #                         "warehouse_name": warehouse.name,
-    #                         "scheduleddate": batch.scheduled_date,
-    #                         "state": batch.state,
-    #                         "user_id": user_info["user_id"],
-    #                         "user_name": user_info["user_name"],
-    #                         "order_by": (picking_strategy.picking_priority_app if picking_strategy else ""),
-    #                         "order_picking": (picking_strategy.picking_order_app if picking_strategy else ""),
-    #                         "picking_type_id": (batch.picking_type_id.display_name if batch.picking_type_id else "N/A"),
-    #                         "cantidad_pedidos": len(batch.picking_ids),
-    #                         "lista_pedidos": [],
-    #                     }
-
-    #                     for picking in batch.picking_ids:
-    #                         pedido = {
-    #                             "id": picking.id,
-    #                             "batch_id": batch.id,
-    #                             "name": picking.name,
-    #                             "referencia": picking.origin,
-    #                             "contacto": (picking.partner_id.id if picking.partner_id else 0),
-    #                             "contacto_name": (picking.partner_id.name if picking.partner_id else "N/A"),
-    #                             "tipo_operacion": (picking.picking_type_id.name if picking.picking_type_id else "N/A"),
-    #                             "cantidad_productos": len(picking.move_line_ids),
-    #                             "zona_entrega": picking.delivery_zone_id.name if picking.delivery_zone_id else "",
-    #                             "numero_paquetes": len(picking.package_ids),
-    #                             "lista_productos": [],
-    #                             "lista_paquetes": [],
-    #                         }
-
-    #                         # ✅ Procesar líneas de movimiento
-    #                         for move_line in picking.move_line_ids:
-    #                             location = move_line.location_id
-    #                             location_dest = move_line.location_dest_id
-
-    #                             product = move_line.product_id
-    #                             lot = move_line.lot_id
-
-    #                             array_all_barcode = []
-    #                             if product.barcode_ids:
-    #                                 array_all_barcode = [
-    #                                     {
-    #                                         "barcode": barcode.name,
-    #                                         "batch_id": batch.id,
-    #                                         "id_move_line": move_line.id,
-    #                                         "id_product": product.id,
-    #                                     }
-    #                                     for barcode in product.barcode_ids
-    #                                     if barcode.name  # Filtra solo los barcodes válidos
-    #                                 ]
-
-    #                             array_packing = []
-    #                             if product.packaging_ids:
-    #                                 array_packing = [
-    #                                     {
-    #                                         "barcode": pack.barcode,
-    #                                         "cantidad": pack.qty,
-    #                                         "batch_id": batch.id,
-    #                                         "id_move": move_line.id,
-    #                                         "id_product": product.id,
-    #                                     }
-    #                                     for pack in product.packaging_ids
-    #                                     if pack.barcode and pack.barcode != False  # Filtra solo si barcode es válido
-    #                                 ]
-
-    #                             productos = {
-    #                                 "id_move": move_line.id,
-    #                                 "product_id": [
-    #                                     product.id,
-    #                                     product.name,
-    #                                 ],
-    #                                 "batch_id": batch.id,
-    #                                 "pedido_id": picking.id,
-    #                                 "id_product": product.id if product else 0,
-    #                                 "picking_id": picking.id,
-    #                                 "lote_id": lot.id if lot else "",
-    #                                 "lot_id": (
-    #                                     [
-    #                                         lot.id,
-    #                                         lot.name if lot else "",
-    #                                     ]
-    #                                     if lot
-    #                                     else []
-    #                                 ),
-    #                                 "expire_date": (lot.expiration_date if lot else ""),
-    #                                 "location_id": [
-    #                                     location.id,
-    #                                     location.name if location else "",
-    #                                 ],
-    #                                 "barcode_location": (location.barcode if location else ""),
-    #                                 "location_dest_id": [
-    #                                     location_dest.id,
-    #                                     location_dest.name if location_dest else "",
-    #                                 ],
-    #                                 "barcode_location_dest": (location_dest.barcode if location_dest else ""),
-    #                                 "other_barcode": array_all_barcode,
-    #                                 "quantity": move_line.quantity,
-    #                                 "tracking": product.tracking if product else "",
-    #                                 "barcode": (product.barcode if product.barcode else ""),
-    #                                 "product_packing": array_packing,
-    #                                 "weight": product.weight if product else 0,
-    #                                 "unidades": (product.uom_id.name if product.uom_id else "UND"),
-    #                                 "rimoval_priority": location.priority_picking if location else 0,
-    #                             }
-
-    #                             pedido["lista_productos"].append(productos)
-
-    #                         # ✅ Procesar paquetes
-    #                         for pack in picking.package_ids:
-
-    #                             move_lines_in_package = request.env["stock.move.line"].sudo().search([("package_id", "=", pack.id)])
-
-    #                             # Contar los productos dentro del paquete
-    #                             cantidad_productos = len(move_lines_in_package)
-
-    #                             package = {
-    #                                 "name": pack.name,
-    #                                 "batch_id": batch.id,
-    #                                 "pedido_id": picking.id,
-    #                                 "cantidad_productos": cantidad_productos,
-    #                                 "lista_productos": [],
-    #                                 "is_sticker": pack.is_sticker,
-    #                                 "is_certificate": pack.is_certificate,
-    #                                 "fecha_creacion": (pack.create_date.strftime("%Y-%m-%d") if pack.create_date else ""),
-    #                                 "fecha_actualizacion": (pack.write_date.strftime("%Y-%m-%d") if pack.write_date else ""),
-    #                             }
-    #                             pedido["lista_paquetes"].append(package)
-
-    #                             # ✅ Procesar productos dentro del paquete
-    #                             for move_line in move_lines_in_package:
-    #                                 product = move_line.product_id
-    #                                 lot = move_line.lot_id
-
-    #                                 product_in_packing = {
-    #                                     "id_move": move_line.id,
-    #                                     "product_id": [
-    #                                         product.id,
-    #                                         product.name,
-    #                                     ],
-    #                                     "name_packing": pack.name,
-    #                                     "cantidad_enviada": move_line.qty_done,  # Cantidad enviada del producto en el paquete
-    #                                     "unidades": (product.uom_id.name if product.uom_id else "UND"),
-    #                                     "peso": product.weight if product else 0,
-    #                                     "lote_id": (
-    #                                         [
-    #                                             lot.id,
-    #                                             lot.name if lot else "",
-    #                                         ]
-    #                                         if lot
-    #                                         else []
-    #                                     ),
-    #                                 }
-
-    #                                 package["lista_productos_in_packing"].append(product_in_packing)
-
-    #                         array_batch_temp["lista_pedidos"].append(pedido)
-
-    #                     array_batch.append(array_batch_temp)
-
-    #         return {"code": 200, "result": array_batch}
-
-    #     except AccessError as e:
-    #         return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
-    #     except Exception as err:
-    #         return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
-
     @http.route("/api/batch_packing", auth="user", type="json", methods=["GET"])
     def get_batch_packing(self):
         try:
@@ -298,8 +72,8 @@ class TransaccionDataPacking(http.Controller):
                             "name": batch.name,
                             "scheduleddate": batch.scheduled_date,
                             "state": batch.state,
-                            "user_id": user_info["user_id"],
-                            "user_name": user_info["user_name"],
+                            "user_id": user_info["user_id"] if batch.user_id else 0,
+                            "user_name": user_info["user_name"] if batch.user_id else "",
                             "order_by": picking_strategy.picking_priority_app if picking_strategy else "",
                             "order_picking": picking_strategy.picking_order_app if picking_strategy else "",
                             "picking_type_id": batch.picking_type_id.display_name if batch.picking_type_id else "N/A",
@@ -308,7 +82,9 @@ class TransaccionDataPacking(http.Controller):
                             "end_time_pack": batch.end_time_pack or "",
                             "zona_entrega": batch.picking_ids[0].delivery_zone_id.name if batch.picking_ids and batch.picking_ids[0].delivery_zone_id else "N/A",
                             # "zona_entrega_tms": batch.picking_ids[0].delivery_zone_tms if batch.picking_ids and batch.picking_ids[0].delivery_zone_tms else "N/A",
+                            "zona_entrega_tms": "",
                             # "order_tms": batch.picking_ids[0].order_tms if batch.picking_ids and batch.picking_ids[0].order_tms else "N/A",
+                            "order_tms": "",
                             "lista_pedidos": [],
                         }
 
@@ -319,7 +95,7 @@ class TransaccionDataPacking(http.Controller):
                                 "id": picking.id,
                                 "batch_id": batch.id,
                                 "name": picking.name,
-                                "referencia": picking.origin,
+                                "referencia": picking.origin if picking.origin else "",
                                 "contacto": picking.partner_id.id if picking.partner_id else 0,
                                 "contacto_name": picking.partner_id.name if picking.partner_id else "N/A",
                                 "tipo_operacion": picking.picking_type_id.name if picking.picking_type_id else "N/A",
@@ -328,6 +104,8 @@ class TransaccionDataPacking(http.Controller):
                                 "zona_entrega": picking.delivery_zone_id.name if picking.delivery_zone_id else "",
                                 # "zona_entrega_tms": picking.delivery_zone_tms if picking.delivery_zone_tms else "",
                                 # "order_tms": picking.order_tms if picking.order_tms else "",
+                                "zona_entrega_tms": "",
+                                "order_tms": "",
                                 "numero_paquetes": len(picking.move_line_ids.mapped("package_id")),
                                 "lista_productos": [],
                                 "lista_paquetes": [],
@@ -429,13 +207,19 @@ class TransaccionDataPacking(http.Controller):
 
                                     product_in_packing = {
                                         "id_move": move_line.id,
+                                        "pedido_id": picking.id,
+                                        "batch_id": batch.id,
+                                        "package_name": pack.name,
+                                        "quantity_separate": move_line.quantity,
+                                        "id_product": product.id if product else 0,
                                         "product_id": [product.id, product.name],
                                         "name_packing": pack.name,
-                                        "cantidad_enviada": move_line.qty_done,
+                                        "cantidad_enviada": move_line.quantity,
                                         "unidades": product.uom_id.name if product.uom_id else "UND",
                                         "peso": product.weight if product else 0,
                                         "lote_id": [lot.id, lot.name if lot else ""] if lot else [],
                                         "observacion": move_line.new_observation_packing,
+                                        "weight" : product.weight if product else 0,
                                         "is_sticker": pack.is_sticker,
                                         "is_certificate": pack.is_certificate,
                                         "id_package": pack.id,
@@ -495,7 +279,7 @@ class TransaccionDataPacking(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
-    ## GET Transacciones para asignar paquete a pedido o producto en packing
+
     @http.route("/api/send_packing", auth="user", type="json", methods=["POST"])
     def send_packing(self, **auth):
         try:
@@ -505,7 +289,6 @@ class TransaccionDataPacking(http.Controller):
                 return {"code": 401, "msg": "Usuario no autenticado"}
 
             id_batch = auth.get("id_batch")
-            id_paquete = auth.get("id_paquete")
             list_item = auth.get("list_item", [])
             is_sticker = auth.get("is_sticker", False)
             is_certificate = auth.get("is_certificate", False)
@@ -518,7 +301,18 @@ class TransaccionDataPacking(http.Controller):
             if not batch.exists():
                 return {"code": 400, "msg": f"El id_batch {id_batch} no existe"}
 
-            # ✅ Procesar cada ítem en la lista
+            # ✅ Crear el paquete manualmente
+            pack = (
+                request.env["stock.quant.package"]
+                .sudo()
+                .create(
+                    {
+                        "is_sticker": is_sticker,
+                        "is_certificate": is_certificate,
+                    }
+                )
+            )
+
             for move in list_item:
                 product_id = move.get("product_id")
                 location_id = move.get("location_id")
@@ -529,25 +323,80 @@ class TransaccionDataPacking(http.Controller):
                 id_operario = move.get("id_operario", 0)
                 fecha_transaccion = move.get("fecha_transaccion", "")
 
-                domain = [
-                    ("product_id", "=", product_id),
-                    ("location_id", "=", location_id),
-                ]
+                # poner la observacion en minuscula
+                
 
-                if lote:
-                    domain.append(("lot_id", "=", int(lote)))
-
-                # ✅ Actualizar stock.move.line con el paquete
                 move_line = request.env["stock.move.line"].sudo().browse(id_move)
 
                 if move_line.exists():
-                    if move_line.quantity_demanded >= cantidad_separada:
-                        move_line.write({"qty_done": cantidad_separada, "new_observation_packing": observacion, "user_operator_id": id_operario, "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)})
+                    if move_line.quantity >= cantidad_separada:
+                        
+                        if observacion.lower() != "sin novedad":
+                            move_line.write(
+                                {
+                                    "result_package_id": pack.id,
+                                    "quantity": cantidad_separada,
+                                    "new_observation_packing": observacion,
+                                    "user_operator_id": id_operario,
+                                    "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
+                                    "is_done_item_pack": True,
+                                }
+                            )
+                        if cantidad_separada < move_line.quantity:
+                            cantidad_original = move_line.quantity
+
+                            # ✅ 1. Restar a la original
+                            move_line.write({"quantity": cantidad_original - cantidad_separada})
+
+                            # ✅ 2. Copiar la línea original
+                            new_line_vals = move_line.copy_data()[0]
+
+                            # ✅ 3. Actualizar los datos ANTES de crearla
+                            new_line_vals.update(
+                                {
+                                    "quantity": cantidad_separada,
+                                    "result_package_id": pack.id,
+                                    "new_observation_packing": observacion,
+                                    "user_operator_id": id_operario,
+                                    "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
+                                    "is_done_item_pack": True,
+                                }
+                            )
+
+                            # ✅ 4. Crear la línea nueva con los valores actualizados
+                            new_line = request.env["stock.move.line"].sudo().create(new_line_vals)
+
+                            new_line.write({"is_done_item_pack": True})
+
+                        else:
+                            # ✅ Asignar directamente al paquete si no hay división
+                            move_line.write(
+                                {
+                                    "result_package_id": pack.id,
+                                    "quantity": cantidad_separada,
+                                    "new_observation_packing": observacion,
+                                    "user_operator_id": id_operario,
+                                    "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
+                                    "is_done_item_pack": True,
+                                }
+                            )
+                    elif cantidad_separada == move_line.quantity:
+                        # ✅ Asignar directamente al paquete si la cantidad es igual
+                        move_line.write(
+                            {
+                                "result_package_id": pack.id,
+                                "quantity": cantidad_separada,
+                                "new_observation_packing": observacion,
+                                "user_operator_id": id_operario,
+                                "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
+                                "is_done_item_pack": True,
+                            }
+                        )
                     else:
                         array_msg.append(
                             {
                                 "code": 400,
-                                "msg": f"La cantidad separada {cantidad_separada} es mayor a la cantidad demandada {move_line.quantity_demanded}",
+                                "msg": f"La cantidad separada {cantidad_separada} es mayor a la cantidad disponible {move_line.quantity}",
                             }
                         )
                         continue
@@ -559,30 +408,10 @@ class TransaccionDataPacking(http.Controller):
                         }
                     )
 
-            # ✅ ejecutar la acción de empaquetar del batch
-            pack = batch.action_put_in_pack()
-
-            # ✅ Asignar valores a los paquetes creados
-            if pack:
-                pack.write({"is_sticker": is_sticker, "is_certificate": is_certificate})
-
-            # ✅ Verificar líneas divididas y actualizar `is_done_item_pack`
-            if pack:
-                move_lines = request.env["stock.move.line"].sudo().search([("picking_id", "in", batch.picking_ids.ids)])
-
-                for move_line in move_lines:
-                    # Si la línea tiene qty_done en 0, verificamos si fue dividida de otra línea
-                    if move_line.qty_done == 0:
-                        original_line = request.env["stock.move.line"].sudo().search([("move_id", "=", move_line.move_id.id), ("id", "!=", move_line.id), ("qty_done", ">", 0)], limit=1)  # Buscar la línea original procesada
-
-                        # Solo actualizar si es una línea nueva dividida
-                        if original_line:
-                            move_line.write({"is_done_item_pack": False})
-
             array_msg.append(
                 {
-                    "id_paquete": pack.id if pack else "",
-                    "name_paquete": pack.name if pack else "",
+                    "id_paquete": pack.id,
+                    "name_paquete": pack.name,
                     "id_batch": batch.id,
                     "cantidad_productos_en_el_paquete": len(list_item),
                     "is_sticker": is_sticker,
@@ -657,7 +486,6 @@ class TransaccionDataPacking(http.Controller):
                             "new_observation_packing": observacion,
                             "user_operator_id": id_operario,
                             "date_transaction_packing": "",
-                            "qty_done": 0,
                             "is_done_item_pack": False,
                         }
                     )

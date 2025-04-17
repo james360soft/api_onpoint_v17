@@ -25,6 +25,23 @@ class MasterData(http.Controller):
                 "email": user.email,
             }
 
+            allowed_warehouses = obtener_almacenes_usuario(user)
+
+            # Verificar si es un error (diccionario con código y mensaje)
+            if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
+                return allowed_warehouses  # Devolver el error directamente
+
+            user_data["allowed_warehouses"] = []
+
+            for warehouse in allowed_warehouses:
+                if warehouse:
+                    user_data["allowed_warehouses"].append(
+                        {
+                            "id": warehouse.id,
+                            "name": warehouse.name,
+                        }
+                    )
+
             # Verificar permisos en appwms.users_wms
             user_wms = request.env["appwms.users_wms"].sudo().search([("user_id", "=", user.id)], limit=1)
             if not user_wms:
@@ -63,6 +80,12 @@ class MasterData(http.Controller):
                 "manual_product_reading": user_permissions.manual_product_reading,
                 "manual_source_location": user_permissions.manual_source_location,
                 "show_owner_field": user_permissions.show_owner_field,
+                "scan_destination_location_reception": user_permissions.scan_destination_location_reception,
+                "manual_product_selection_transfer": user_permissions.manual_product_selection_transfer,
+                "manual_source_location_transfer": user_permissions.manual_source_location_transfer,
+                "manual_dest_location_transfer": user_permissions.manual_dest_location_transfer,
+                "manual_quantity_transfer": user_permissions.manual_quantity_transfer,
+                "count_quantity_inventory": user_permissions.count_quantity_inventory,
             }
 
             return {"code": 200, "result": response_data}
@@ -332,8 +355,6 @@ class MasterData(http.Controller):
                 )
             )
 
-            print("existing_time", existing_time)
-
             if existing_time:
                 # actualizar el registro existente
                 existing_time.write({"end_time": end_time})
@@ -524,3 +545,58 @@ class MasterData(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado {str(err)}"}
+
+    ## POST Update tiempo de transferencia
+    @http.route("/api/update_time_transfer", auth="user", type="json", methods=["POST"])
+    def post_transfer_start_time(self, transfer_id, time, field_name):
+        try:
+            # Buscar la transferencia
+            transfer = request.env["stock.picking"].sudo().search([("id", "=", transfer_id)], limit=1)
+
+            if not transfer:
+                return {"code": 404, "msg": "No se encontró la transferencia con el ID proporcionado"}
+
+            # Validar start_time
+            if not time:
+                return {"code": 400, "msg": "El tiempo 'start_time' es requerido"}
+
+            # Convertir start_time a datetime para validaciones
+            try:
+                start_time_dt = datetime.strptime(time, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return {"code": 400, "msg": "Formato de start_time inválido. Debe ser 'YYYY-MM-DD HH:MM:SS'"}
+
+            # Validar que el start_time no sea en el futuro
+            # if start_time_dt > datetime.now():
+            #     return {"code": 400, "msg": "start_time no puede ser en el futuro"}
+
+            # Guardar start_time
+            transfer.sudo().write({field_name: start_time_dt})
+
+            if "start" in field_name:
+                return {"code": 200, "msg": "Tiempo de inicio actualizado correctamente"}
+            else:
+                return {"code": 200, "msg": "Tiempo de fin actualizado correctamente"}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 400, "msg": f"Error inesperado {str(err)}"}
+
+
+def obtener_almacenes_usuario(user):
+
+    user_wms = request.env["appwms.users_wms"].sudo().search([("user_id", "=", user.id)], limit=1)
+
+    if not user_wms:
+        return {
+            "code": 401,
+            "msg": "El usuario no tiene permisos o no esta registrado en el módulo de configuraciones en el WMS",
+        }
+
+    allowed_warehouses = user_wms.allowed_warehouse_ids
+
+    if not allowed_warehouses:
+        return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
+
+    return allowed_warehouses
