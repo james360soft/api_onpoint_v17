@@ -37,7 +37,7 @@ class TransaccionRecepcionController(http.Controller):
                             ("state", "in", ["assigned", "confirmed"]),
                             ("picking_type_code", "=", "incoming"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
-                            ("is_return_picking", "=", False),
+                            # ("is_return_picking", "=", False),
                             ("user_id", "in", [user.id, False]),  # Asignadas al usuario o sin asignar
                         ]
                     )

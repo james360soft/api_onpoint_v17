@@ -32,7 +32,7 @@ class TransaccionTransferenciasController(http.Controller):
                             ("state", "in", ["assigned", "confirmed"]),
                             ("picking_type_code", "=", "internal"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
-                            ("picking_type_id.sequence_code", "in", ["INT", "PICK", "ALT"]),
+                            ("picking_type_id.sequence_code", "in", ["INT", "ALT"]),
                             ("user_id", "in", [user.id, False]),
                         ]
                     )
@@ -548,7 +548,7 @@ class TransaccionTransferenciasController(http.Controller):
             id_transferencia = auth.get("id_transferencia", 0)
             crear_backorder = auth.get("crear_backorder", True)
 
-            transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia), ("picking_type_code", "=", "internal"), ("picking_type_id.sequence_code", "=", "INT"), ("state", "=", "assigned")], limit=1)
+            transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia), ("picking_type_code", "=", "internal"), ("picking_type_id.sequence_code", "in", ["INT", "PICK", "ALT"]), ("state", "=", "assigned")], limit=1)
 
             if not transferencia:
                 return {"code": 400, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
@@ -784,7 +784,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "product_packing": [{"barcode": p.barcode, "cantidad": p.qty, "id_product": p.product_id.id, "id_move": move.id, "batch_id": picking.id} for p in getattr(product, "packaging_ids", [])],
                         "quantity_ordered": quantity_ordered,
                         "quantity_to_transfer": quantity_ordered,
-                        "cantidad_faltante": cantidad_faltante,
+                        "cantidad_faltante": quantity_ordered,
                         "uom": move.move_id.product_uom.name if move.move_id and move.move_id.product_uom else "UND",
                         "location_dest_id": move.location_dest_id.id or 0,
                         "location_dest_name": move.location_dest_id.display_name or "",
@@ -840,7 +840,7 @@ class TransaccionTransferenciasController(http.Controller):
                     "quantity_ordered": move_line.move_id.product_uom_qty,
                     "quantity_to_transfer": move_line.move_id.product_uom_qty,
                     "quantity_done": move_line.quantity,
-                    "cantidad_faltante": 0,
+                    "cantidad_faltante": cantidad_faltante,
                     "uom": move_line.product_uom_id.name if move_line.product_uom_id else "UND",
                     "location_dest_id": move_line.location_dest_id.id or 0,
                     "location_dest_name": move_line.location_dest_id.display_name or "",

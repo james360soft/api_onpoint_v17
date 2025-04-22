@@ -45,7 +45,7 @@ class TransaccionDataPicking(http.Controller):
 
             user_location_ids = [location["id"] for location in locations]
 
-            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "in", ["internal", "incoming"])]
+            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "internal")]
 
             # ✅ Filtrar por responsable si config_picking es 'responsible'
             if config_picking.picking_type == "responsible":
