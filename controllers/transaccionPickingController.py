@@ -45,7 +45,7 @@ class TransaccionDataPicking(http.Controller):
 
             user_location_ids = [location["id"] for location in locations]
 
-            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "internal")]
+            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "in", ["internal", "incoming"])]
 
             # ✅ Filtrar por responsable si config_picking es 'responsible'
             if config_picking.picking_type == "responsible":
@@ -65,6 +65,19 @@ class TransaccionDataPicking(http.Controller):
 
                 if not move_unified_ids:
                     continue
+
+                origins_list = []
+                if batch.picking_ids:
+                    for picking in batch.picking_ids:
+                        if picking.origin:
+                            origins_list.append(
+                                {
+                                    "name": picking.origin,
+                                    "id": picking.id,
+                                    "id_batch": batch.id,
+                                }
+                            )
+                origin_details = origins_list if origins_list else []
 
                 stock_moves = move_unified_ids.read(["product_id", "lot_id", "location_id", "location_dest_id", "product_uom_qty"])
 
@@ -91,6 +104,7 @@ class TransaccionDataPicking(http.Controller):
                     "zona_entrega": batch.picking_ids[0].delivery_zone_id.name if batch.picking_ids and batch.picking_ids[0].delivery_zone_id else "SIN-ZONA",
                     # "zona_entrega_tms": batch.picking_ids[0].delivery_zone_tms if batch.picking_ids and batch.picking_ids[0].delivery_zone_tms else "N/A",
                     # "order_tms": batch.picking_ids[0].order_tms if batch.picking_ids and batch.picking_ids[0].order_tms else "N/A",
+                    "origin": origin_details,
                     "list_items": [],
                 }
 
@@ -178,6 +192,7 @@ class TransaccionDataPicking(http.Controller):
                             "id_zona_entrega": delivery_zone_id,
                             "pedido": picking_name,
                             "pedido_id": picking_id,
+                            "origin": picking.origin or "",
                         }
                     )
 
