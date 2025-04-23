@@ -454,7 +454,7 @@ class TransaccionTransferenciasController(http.Controller):
                     cantidad_restante = cantidad_inicial - cantidad_enviada
 
                     ### NOTA
-                    # Entonces se dividira por linea, la lineas se peude dividir n veces segun la cantidad que haya tenido inciialemnte que seria lo que el sistema recerbo 
+                    # Entonces se dividira por linea, la lineas se peude dividir n veces segun la cantidad que haya tenido inciialemnte que seria lo que el sistema recerbo
 
                     # return {"code": 200, "msg": cantidad_restante, "cantidad_total_enviada": cantidad_total_enviada, "cantidad_demandada": cantidad_demandada}
                     if cantidad_restante > 0:
@@ -1233,6 +1233,8 @@ class TransaccionTransferenciasController(http.Controller):
                     "time": time_line,
                     "date_transaction": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
                     "quantity": cantidad_enviada,
+                    "location_id": id_ubicacion_origen,
+                    "location_dest_id": id_ubicacion_destino,
                 }
 
                 if id_lote:
