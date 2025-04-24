@@ -85,6 +85,7 @@ class MasterData(http.Controller):
                 "manual_source_location_transfer": user_permissions.manual_source_location_transfer,
                 "manual_dest_location_transfer": user_permissions.manual_dest_location_transfer,
                 "manual_quantity_transfer": user_permissions.manual_quantity_transfer,
+                "hide_validate_transfer": user_permissions.hide_validate_transfer,
                 "count_quantity_inventory": user_permissions.count_quantity_inventory,
             }
 
