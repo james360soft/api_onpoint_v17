@@ -213,7 +213,7 @@ class TransaccionTransferenciasController(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
-        
+
     ## GET Obtener tranferencia PICK
     @http.route("/api/transferencias/pick", auth="user", type="json", methods=["GET"])
     def get_transferencias_pick(self):
@@ -222,6 +222,8 @@ class TransaccionTransferenciasController(http.Controller):
 
             if not user:
                 return {"code": 400, "msg": "Usuario no encontrado"}
+
+            picking_strategy = request.env["picking.strategy"].sudo().browse(1)
 
             array_transferencias = []
 
@@ -279,6 +281,11 @@ class TransaccionTransferenciasController(http.Controller):
                         "backorder_id": picking.backorder_id.id or 0,
                         "backorder_name": picking.backorder_id.name or "",
                         "show_check_availability": picking.show_check_availability,
+                        "order_by": picking_strategy.picking_priority_app if picking_strategy else "",
+                        "order_picking": picking_strategy.picking_order_app if picking_strategy else "",
+                        "muelle": picking.location_dest_id.display_name or "",
+                        "muelle_id": picking.location_dest_id.id or 0,
+                        "barcode_muelle": picking.location_dest_id.barcode or "",
                         "lineas_transferencia": [],
                         "lineas_transferencia_enviadas": [],
                     }
@@ -292,6 +299,8 @@ class TransaccionTransferenciasController(http.Controller):
 
                         cantidad_faltante = quantity_ordered - cantidad_faltante
 
+                        location = move.location_id
+
                         if quantity_done == 0:
                             continue
 
@@ -301,7 +310,8 @@ class TransaccionTransferenciasController(http.Controller):
                                 "id": move.move_id.id if move.move_id else 0,
                                 "id_move": move.id,
                                 "id_transferencia": picking.id,
-                                "product_id": product.id,
+                                "batch_id": picking.id, # ✅
+                                "product_id": [product.id, product.name], # ✅
                                 "product_name": product.name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
@@ -314,34 +324,34 @@ class TransaccionTransferenciasController(http.Controller):
                                 # "quantity_done": quantity_done,
                                 "cantidad_faltante": cantidad_faltante,
                                 "uom": move.move_id.product_uom.name if move.move_id and move.move_id.product_uom else "UND",
-                                "location_dest_id": move.location_dest_id.id or 0,
+                                "location_dest_id": [move.location_dest_id.id, move.location_dest_id.display_name], # ✅
                                 "location_dest_name": move.location_dest_id.display_name or "",
                                 "location_dest_barcode": move.location_dest_id.barcode or "",
-                                "location_id": move.location_id.id or 0,
+                                "location_id": [move.location_id.id, move.location_id.display_name], # ✅
                                 "location_name": move.location_id.display_name or "",
                                 "location_barcode": move.location_id.barcode or "",
                                 "weight": product.weight or 0,
+                                "rimoval_priority": location.priority_picking_desplay,
+                                "zona_entrega": picking.delivery_zone_id.display_name,
                                 "is_done_item": False,
                                 "date_transaction": "",
                                 "observation": "",
                                 "time": 0,
                                 "user_operator_id": 0,
+                                "fecha_vencimiento": move.lot_id.expiration_date or "",
                             }
 
                             if move.lot_id:
                                 linea_info.update(
                                     {
-                                        "lot_id": move.lot_id.id,
-                                        "lot_name": move.lot_id.name,
-                                        "fecha_vencimiento": move.lot_id.expiration_date or "",
+                                        "lot_id": [move.lot_id.id,move.lot_id.name]
+                                        
                                     }
                                 )
                             else:
                                 linea_info.update(
                                     {
-                                        "lot_id": 0,
-                                        "lot_name": "",
-                                        "fecha_vencimiento": "",
+                                        "lot_id":[0,""],
                                     }
                                 )
 
@@ -362,7 +372,8 @@ class TransaccionTransferenciasController(http.Controller):
                             "id": move_line.id,
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
-                            "product_id": product.id,
+                            "batch_id": picking.id, # ✅
+                            "product_id": [product.id, product.name], # ✅
                             "product_name": product.name,
                             "product_code": product.default_code or "",
                             "product_barcode": product.barcode or "",
@@ -375,34 +386,34 @@ class TransaccionTransferenciasController(http.Controller):
                             "quantity_done": move_line.quantity,
                             "cantidad_faltante": quantity_ordered,
                             "uom": move_line.product_uom_id.name if move_line.product_uom_id else "UND",
-                            "location_dest_id": move_line.location_dest_id.id or 0,
+                            "location_dest_id": [move_line.location_dest_id.id, move_line.location_dest_id.display_name], # ✅
                             "location_dest_name": move_line.location_dest_id.display_name or "",
                             "location_dest_barcode": move_line.location_dest_id.barcode or "",
-                            "location_id": move_line.location_id.id or 0,
+                            "location_id": [move_line.location_id.id, move_line.location_id.display_name], # ✅
                             "location_name": move_line.location_id.display_name or "",
                             "location_barcode": move_line.location_id.barcode or "",
                             "weight": product.weight or 0,
+                            "rimoval_priority": location.priority_picking_desplay,
+                            "zona_entrega": picking.delivery_zone_id.display_name,
                             "is_done_item": move_line.is_done_item,
                             "date_transaction": move_line.date_transaction or "",
                             "observation": move_line.new_observation or "",
                             "time": move_line.time or 0,
                             "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
+                            "fecha_vencimiento": move_line.lot_id.expiration_date or "",
                         }
 
                         if move_line.lot_id:
                             linea_info.update(
                                 {
-                                    "lot_id": move_line.lot_id.id,
-                                    "lot_name": move_line.lot_id.name,
-                                    "fecha_vencimiento": move_line.lot_id.expiration_date or "",
+                                    "lot_id": [move_line.lot_id.id,move_line.lot_id.name]
+                                    
                                 }
                             )
                         else:
                             linea_info.update(
                                 {
-                                    "lot_id": 0,
-                                    "lot_name": "",
-                                    "fecha_vencimiento": "",
+                                    "lot_id":[0,""],
                                 }
                             )
 
@@ -434,8 +445,6 @@ class TransaccionTransferenciasController(http.Controller):
             allowed_warehouses = obtener_almacenes_usuario(user)
             if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
                 return allowed_warehouses
-            
-            picking_strategy = request.env["picking.strategy"].sudo().browse(1)
 
             for warehouse in allowed_warehouses:
 
@@ -463,7 +472,7 @@ class TransaccionTransferenciasController(http.Controller):
                     .search(
                         [
                             ("state", "in", ["assigned", "confirmed"]),
-                            ("picking_type_code", "=", "internal"),
+                            # ("picking_type_code", "=", "internal"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", [sequence_code]),
                             ("user_id", "in", [user.id, False]),
