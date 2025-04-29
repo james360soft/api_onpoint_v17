@@ -301,16 +301,49 @@ class TransaccionTransferenciasController(http.Controller):
 
                         location = move.location_id
 
+                        array_all_barcode = (
+                            [
+                            {
+                                "barcode": barcode.name,
+                                "batch_id": picking.id,
+                                "id_move":  move.move_id.id if move.move_id else 0,
+                                "id_product": product.id or 0,
+                            }
+                            for barcode in product.barcode_ids
+                            if barcode.name
+                            ]
+                            if hasattr(product, "barcode_ids")
+                            else []
+                        )
+
+                        # ✅ Obtener empaques del producto
+                        array_packing = (
+                            [
+                                {
+                                    "barcode": pack.barcode,
+                                    "cantidad": pack.qty,
+                                    "batch_id": picking.id,
+                                    "id_move": move.move_id.id if move.move_id else 0,
+                                    "product_id": move["product_id"][0] if move["product_id"] else 0,
+                                }
+                                for pack in product.packaging_ids
+                                if pack.barcode
+                            ]
+                            if product.packaging_ids
+                            else []
+                        )
+
                         if quantity_done == 0:
                             continue
 
                         if not move.is_done_item:
-
                             linea_info = {
                                 "id": move.move_id.id if move.move_id else 0,
-                                "id_move": move.id,
+                                "id_move": move.move_id.id if move.move_id else 0,
+                                # "id_move": move.id,
                                 "id_transferencia": picking.id,
                                 "batch_id": picking.id,  # ✅
+                                "id_product": product.id,
                                 "product_id": [product.id, product.name],  # ✅
                                 "product_name": product.name,
                                 "product_code": product.default_code or "",
@@ -333,6 +366,13 @@ class TransaccionTransferenciasController(http.Controller):
                                 "weight": product.weight or 0,
                                 "rimoval_priority": location.priority_picking_desplay,
                                 "zona_entrega": picking.delivery_zone_id.display_name,
+                                "other_barcode" : array_all_barcode,
+                                "product_packing": array_packing,
+                                "pedido": picking.name,
+                                "pedido_id" : picking.id,
+                                "origin": picking.origin or "",
+                                # "lot_id": move.lot_id.id if move.lot_id else 0,
+
                                 # "is_done_item": False,
                                 # "date_transaction": "",
                                 # "observation": "",
@@ -368,6 +408,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
                             "batch_id": picking.id,  # ✅
+                            "id_product": product.id,
                             "product_id": [product.id, product.name],  # ✅
                             "product_name": product.name,
                             "product_code": product.default_code or "",
@@ -390,6 +431,11 @@ class TransaccionTransferenciasController(http.Controller):
                             "weight": product.weight or 0,
                             "rimoval_priority": location.priority_picking_desplay,
                             "zona_entrega": picking.delivery_zone_id.display_name,
+                            "other_barcode" : array_all_barcode,
+                            "product_packing": array_packing,
+                            "pedido": picking.name,
+                            "pedido_id" : picking.id,
+                            "origin": picking.origin or "",
                             # "is_done_item": move_line.is_done_item,
                             # "date_transaction": move_line.date_transaction or "",
                             # "observation": move_line.new_observation or "",
