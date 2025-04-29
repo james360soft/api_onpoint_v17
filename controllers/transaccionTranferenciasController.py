@@ -319,17 +319,17 @@ class TransaccionTransferenciasController(http.Controller):
                                 "dias_vencimiento": product.expiration_time or "",
                                 "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
                                 "product_packing": [{"barcode": p.barcode, "cantidad": p.qty, "id_product": p.product_id.id, "id_move": move.id, "batch_id": picking.id} for p in getattr(product, "packaging_ids", [])],
-                                "quantity_ordered": quantity_ordered,
+                                "quantity": quantity_ordered,
                                 "quantity_to_transfer": quantity_ordered,
                                 # "quantity_done": quantity_done,
                                 "cantidad_faltante": cantidad_faltante,
-                                "uom": move.move_id.product_uom.name if move.move_id and move.move_id.product_uom else "UND",
+                                "unidades": move.move_id.product_uom.name if move.move_id and move.move_id.product_uom else "UND",
                                 "location_dest_id": [move.location_dest_id.id, move.location_dest_id.display_name],  # ✅
                                 "location_dest_name": move.location_dest_id.display_name or "",
-                                "location_dest_barcode": move.location_dest_id.barcode or "",
+                                "barcode_location_dest": move.location_dest_id.barcode or "",
                                 "location_id": [move.location_id.id, move.location_id.display_name],  # ✅
                                 "location_name": move.location_id.display_name or "",
-                                "location_barcode": move.location_id.barcode or "",
+                                "barcode_location": move.location_id.barcode or "",
                                 "weight": product.weight or 0,
                                 "rimoval_priority": location.priority_picking_desplay,
                                 "zona_entrega": picking.delivery_zone_id.display_name,
@@ -338,15 +338,15 @@ class TransaccionTransferenciasController(http.Controller):
                                 "observation": "",
                                 "time": 0,
                                 "user_operator_id": 0,
-                                "fecha_vencimiento": move.lot_id.expiration_date or "",
+                                "expire_date": move.lot_id.expiration_date or "",
                             }
 
                             if move.lot_id:
-                                linea_info.update({"lot_id": [move.lot_id.id, move.lot_id.name]})
+                                linea_info.update({"lote_id": [move.lot_id.id, move.lot_id.name]})
                             else:
                                 linea_info.update(
                                     {
-                                        "lot_id": [0, ""],
+                                        "lote_id": [0, ""],
                                     }
                                 )
 
@@ -376,17 +376,17 @@ class TransaccionTransferenciasController(http.Controller):
                             "dias_vencimiento": product.expiration_time or "",
                             "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
                             "product_packing": [{"barcode": p.barcode, "cantidad": p.qty, "id_product": p.product_id.id, "id_move": move_line.id, "batch_id": picking.id} for p in getattr(product, "packaging_ids", [])],
-                            "quantity_ordered": quantity_ordered,
+                            "quantity": quantity_ordered,
                             "quantity_to_transfer": quantity_ordered,
                             "quantity_done": move_line.quantity,
                             "cantidad_faltante": quantity_ordered,
-                            "uom": move_line.product_uom_id.name if move_line.product_uom_id else "UND",
+                            "unidades": move_line.product_uom_id.name if move_line.product_uom_id else "UND",
                             "location_dest_id": [move_line.location_dest_id.id, move_line.location_dest_id.display_name],  # ✅
                             "location_dest_name": move_line.location_dest_id.display_name or "",
-                            "location_dest_barcode": move_line.location_dest_id.barcode or "",
+                            "barcode_location_dest": move_line.location_dest_id.barcode or "",
                             "location_id": [move_line.location_id.id, move_line.location_id.display_name],  # ✅
                             "location_name": move_line.location_id.display_name or "",
-                            "location_barcode": move_line.location_id.barcode or "",
+                            "barcode_location": move_line.location_id.barcode or "",
                             "weight": product.weight or 0,
                             "rimoval_priority": location.priority_picking_desplay,
                             "zona_entrega": picking.delivery_zone_id.display_name,
@@ -395,15 +395,15 @@ class TransaccionTransferenciasController(http.Controller):
                             "observation": move_line.new_observation or "",
                             "time": move_line.time or 0,
                             "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
-                            "fecha_vencimiento": move_line.lot_id.expiration_date or "",
+                            "expire_date": move_line.lot_id.expiration_date or "",
                         }
 
                         if move_line.lot_id:
-                            linea_info.update({"lot_id": [move_line.lot_id.id, move_line.lot_id.name]})
+                            linea_info.update({"lote_id": [move_line.lot_id.id, move_line.lot_id.name]})
                         else:
                             linea_info.update(
                                 {
-                                    "lot_id": [0, ""],
+                                    "lote_id": [0, ""],
                                 }
                             )
 
