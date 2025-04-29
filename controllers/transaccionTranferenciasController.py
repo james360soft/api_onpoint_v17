@@ -1019,6 +1019,163 @@ class TransaccionTransferenciasController(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
+        
+    @http.route("/api/send_transfer/pick", auth="user", type="json", methods=["POST"], csrf=False)
+    def send_transfer_pick(self, **auth):
+        try:
+            user = request.env.user
+
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            id_transferencia = auth.get("id_transferencia", 0)
+            list_items = auth.get("list_items", [])
+
+            transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)])
+            if not transferencia:
+                return {"code": 404, "msg": "Transferencia no encontrada"}
+
+            array_result = []
+
+            for item in list_items:
+                id_move = item.get("id_move")
+                id_product = item.get("id_producto")
+                cantidad_enviada = item.get("cantidad_enviada", 0)
+                id_ubicacion_destino = item.get("id_ubicacion_destino", 0)
+                id_lote = item.get("id_lote", 0)
+                id_operario = item.get("id_operario")
+                fecha_transaccion = item.get("fecha_transaccion", "")
+                time_line = int(item.get("time_line", 0))
+                novedad = item.get("observacion", "")
+                dividida = item.get("dividida", False)
+
+                original_move = request.env["stock.move.line"].sudo().search([("id", "=", id_move)])
+                if not original_move:
+                    return {"code": 404, "msg": f"Movimiento no encontrado (ID: {id_move})"}
+
+                stock_move = original_move.move_id
+
+                move_parent = original_move.move_id
+                product = request.env["product.product"].sudo().search([("id", "=", id_product)])
+
+                if product.tracking == "lot" and not id_lote:
+                    return {"code": 400, "msg": "El producto requiere lote y no se ha proporcionado uno"}
+
+                fecha = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
+
+                noveda_minuscula = novedad.lower()
+                if "pendiente" in noveda_minuscula or "pendientes" in noveda_minuscula:
+                    dividida = False
+
+                if dividida:
+                    update_values = {
+                        "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
+                        "location_dest_id": id_ubicacion_destino,
+                        "location_id": original_move.location_id.id,
+                        "lot_id": id_lote if id_lote else False,
+                        "is_done_item": True,
+                        "date_transaction": fecha,
+                        "new_observation": novedad,
+                        "time": time_line,
+                        "user_operator_id": id_operario,
+                    }
+
+                    # Se toma la cantidad de la linea porque sabemos que esa es la que se puede usar o dividir porque es la que el sistema recerbo
+                    cantidad_inicial = original_move.quantity
+
+                    # Actualizamos los datos con lo que nos envian
+                    original_move.sudo().write(update_values)
+                    # Verificar si hay cantidad restante por enviar
+                    # lineas_enviadas = request.env["stock.move.line"].sudo().search([("move_id", "=", move_parent.id), ("is_done_item", "=", True)])
+                    # cantidad_total_enviada = sum(linea.quantity for linea in lineas_enviadas)
+                    # cantidad_demandada = move_parent.product_uom_qty
+                    # cantidad_restante = cantidad_demandada - cantidad_total_enviada
+
+                    # sacamos la cantidad que necesitamos para crear una nueva linea, que seria la cantidad inicial menos la enviada entonces asi sabemos bajo que rango podemos dividir una cantidad basado lo recerbado del sistema
+                    cantidad_restante = cantidad_inicial - cantidad_enviada
+
+                    ### NOTA
+                    # Entonces se dividira por linea, la lineas se peude dividir n veces segun la cantidad que haya tenido inciialemnte que seria lo que el sistema recerbo
+
+                    # return {"code": 200, "msg": cantidad_restante, "cantidad_total_enviada": cantidad_total_enviada, "cantidad_demandada": cantidad_demandada}
+                    if cantidad_restante > 0:
+                        linea_restante = (
+                            request.env["stock.move.line"]
+                            .sudo()
+                            .create(
+                                {
+                                    "move_id": move_parent.id,
+                                    "product_id": id_product,
+                                    "product_uom_id": original_move.product_uom_id.id,
+                                    "location_id": original_move.location_id.id,
+                                    "location_dest_id": id_ubicacion_destino,
+                                    "quantity": cantidad_restante,
+                                    "lot_id": id_lote if id_lote else False,
+                                    "is_done_item": False,
+                                    "date_transaction": False,
+                                    "new_observation": "Cantidad pendiente por enviar",
+                                    "time": 0,
+                                    "user_operator_id": False,
+                                    "picking_id": id_transferencia,
+                                }
+                            )
+                        )
+
+                        array_result.append(
+                            {
+                                "id_move": linea_restante.id,
+                                "id_transferencia": id_transferencia,
+                                "id_product": linea_restante.product_id.id,
+                                "quantity": linea_restante.quantity,
+                                "is_done_item": linea_restante.is_done_item,
+                                "date_transaction": linea_restante.date_transaction,
+                                "new_observation": linea_restante.new_observation,
+                                "time_line": linea_restante.time,
+                                "user_operator_id": None,
+                            }
+                        )
+
+                else:
+                    update_values = {
+                        "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
+                        "location_dest_id": id_ubicacion_destino,
+                        "location_id": original_move.location_id.id,
+                        "lot_id": id_lote if id_lote else False,
+                        "is_done_item": True,
+                        "date_transaction": fecha,
+                        "new_observation": novedad,
+                        "time": time_line,
+                        "user_operator_id": id_operario,
+                    }
+
+                    original_move.sudo().write(update_values)
+
+                    array_result.append(
+                        {
+                            "id_move": original_move.id,
+                            "id_transferencia": id_transferencia,
+                            "id_product": original_move.product_id.id,
+                            "quantity": original_move.quantity,
+                            "is_done_item": original_move.is_done_item,
+                            "date_transaction": original_move.date_transaction,
+                            "new_observation": original_move.new_observation,
+                            "time_line": original_move.time,
+                            "user_operator_id": original_move.user_operator_id.id,
+                        }
+                    )
+
+            # lineas_con_operario = transferencia.move_line_ids.filtered(lambda l: l.user_operator_id and l.is_done_item)
+            # if not lineas_con_operario:
+            #     transferencia.move_line_ids.filtered(lambda l: not l.user_operator_id and not l.is_done_item).unlink()
+
+            # stock_move.sudo().write({"picked": True})
+
+            return {"code": 200, "result": array_result}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
     @http.route("/api/send_transfer/pack", auth="user", type="json", methods=["POST"], csrf=False)
     def send_transfer_pack(self, **auth):
