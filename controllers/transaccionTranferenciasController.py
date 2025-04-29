@@ -314,7 +314,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "product_id": [product.id, product.name],  # ✅
                                 "product_name": product.name,
                                 "product_code": product.default_code or "",
-                                "product_barcode": product.barcode or "",
+                                "barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
                                 "dias_vencimiento": product.expiration_time or "",
                                 "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
@@ -333,12 +333,12 @@ class TransaccionTransferenciasController(http.Controller):
                                 "weight": product.weight or 0,
                                 "rimoval_priority": location.priority_picking_desplay,
                                 "zona_entrega": picking.delivery_zone_id.display_name,
-                                "is_done_item": False,
-                                "date_transaction": "",
-                                "observation": "",
-                                "time": 0,
-                                "user_operator_id": 0,
-                                "expire_date": move.lot_id.expiration_date or "",
+                                # "is_done_item": False,
+                                # "date_transaction": "",
+                                # "observation": "",
+                                # "time": 0,
+                                # "user_operator_id": 0,
+                                # "expire_date": move.lot_id.expiration_date or "",
                             }
 
                             if move.lot_id:
@@ -371,7 +371,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "product_id": [product.id, product.name],  # ✅
                             "product_name": product.name,
                             "product_code": product.default_code or "",
-                            "product_barcode": product.barcode or "",
+                            "barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",
                             "dias_vencimiento": product.expiration_time or "",
                             "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
@@ -390,12 +390,12 @@ class TransaccionTransferenciasController(http.Controller):
                             "weight": product.weight or 0,
                             "rimoval_priority": location.priority_picking_desplay,
                             "zona_entrega": picking.delivery_zone_id.display_name,
-                            "is_done_item": move_line.is_done_item,
-                            "date_transaction": move_line.date_transaction or "",
-                            "observation": move_line.new_observation or "",
-                            "time": move_line.time or 0,
-                            "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
-                            "expire_date": move_line.lot_id.expiration_date or "",
+                            # "is_done_item": move_line.is_done_item,
+                            # "date_transaction": move_line.date_transaction or "",
+                            # "observation": move_line.new_observation or "",
+                            # "time": move_line.time or 0,
+                            # "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
+                            # "expire_date": move_line.lot_id.expiration_date or "",
                         }
 
                         if move_line.lot_id:
