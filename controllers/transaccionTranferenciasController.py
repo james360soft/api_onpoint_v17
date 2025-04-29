@@ -371,7 +371,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "pedido": picking.name,
                                 "pedido_id" : picking.id,
                                 "origin": picking.origin or "",
-                                # "lot_id": move.lot_id.id if move.lot_id else 0,
+                                "lote_id": move.lot_id.id if move.lot_id else "",
 
                                 # "is_done_item": False,
                                 # "date_transaction": "",
@@ -382,11 +382,11 @@ class TransaccionTransferenciasController(http.Controller):
                             }
 
                             if move.lot_id:
-                                linea_info.update({"lote_id": [move.lot_id.id, move.lot_id.name]})
+                                linea_info.update({"lot_id": [move.lot_id.id, move.lot_id.name]})
                             else:
                                 linea_info.update(
                                     {
-                                        "lote_id": [0, ""],
+                                        "lot_id": [],
                                     }
                                 )
 
@@ -436,6 +436,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "pedido": picking.name,
                             "pedido_id" : picking.id,
                             "origin": picking.origin or "",
+                            "lote_id": move_line.lot_id.id or "",
                             # "is_done_item": move_line.is_done_item,
                             # "date_transaction": move_line.date_transaction or "",
                             # "observation": move_line.new_observation or "",
@@ -445,11 +446,11 @@ class TransaccionTransferenciasController(http.Controller):
                         }
 
                         if move_line.lot_id:
-                            linea_info.update({"lote_id": [move_line.lot_id.id, move_line.lot_id.name]})
+                            linea_info.update({"lot_id": [move_line.lot_id.id, move_line.lot_id.name]})
                         else:
                             linea_info.update(
                                 {
-                                    "lote_id": [0, ""],
+                                    "lot_id": [],
                                 }
                             )
 
