@@ -303,14 +303,14 @@ class TransaccionTransferenciasController(http.Controller):
 
                         array_all_barcode = (
                             [
-                            {
-                                "barcode": barcode.name,
-                                "batch_id": picking.id,
-                                "id_move":  move.move_id.id if move.move_id else 0,
-                                "id_product": product.id or 0,
-                            }
-                            for barcode in product.barcode_ids
-                            if barcode.name
+                                {
+                                    "barcode": barcode.name,
+                                    "batch_id": picking.id,
+                                    "id_move": move.move_id.id if move.move_id else 0,
+                                    "id_product": product.id or 0,
+                                }
+                                for barcode in product.barcode_ids
+                                if barcode.name
                             ]
                             if hasattr(product, "barcode_ids")
                             else []
@@ -366,13 +366,12 @@ class TransaccionTransferenciasController(http.Controller):
                                 "weight": product.weight or 0,
                                 "rimoval_priority": location.priority_picking_desplay,
                                 "zona_entrega": picking.delivery_zone_id.display_name,
-                                "other_barcode" : array_all_barcode,
+                                "other_barcode": array_all_barcode,
                                 "product_packing": array_packing,
                                 "pedido": picking.name,
-                                "pedido_id" : picking.id,
+                                "pedido_id": picking.id,
                                 "origin": picking.origin or "",
                                 "lote_id": move.lot_id.id if move.lot_id else "",
-
                                 # "is_done_item": False,
                                 # "date_transaction": "",
                                 # "observation": "",
@@ -386,7 +385,10 @@ class TransaccionTransferenciasController(http.Controller):
                             else:
                                 linea_info.update(
                                     {
-                                        "lot_id": [],
+                                        "lot_id": [
+                                            0,
+                                            "N/A",
+                                        ],
                                     }
                                 )
 
@@ -431,10 +433,10 @@ class TransaccionTransferenciasController(http.Controller):
                             "weight": product.weight or 0,
                             "rimoval_priority": location.priority_picking_desplay,
                             "zona_entrega": picking.delivery_zone_id.display_name,
-                            "other_barcode" : array_all_barcode,
+                            "other_barcode": array_all_barcode,
                             "product_packing": array_packing,
                             "pedido": picking.name,
-                            "pedido_id" : picking.id,
+                            "pedido_id": picking.id,
                             "origin": picking.origin or "",
                             "lote_id": move_line.lot_id.id or "",
                             # "is_done_item": move_line.is_done_item,
@@ -450,7 +452,10 @@ class TransaccionTransferenciasController(http.Controller):
                         else:
                             linea_info.update(
                                 {
-                                    "lot_id": [],
+                                    "lot_id": [
+                                        0,
+                                        "N/A",
+                                    ],
                                 }
                             )
 
