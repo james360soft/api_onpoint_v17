@@ -245,11 +245,11 @@ class TransaccionDataPicking(http.Controller):
 
             user_location_ids = [location["id"] for location in locations]
 
-            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "incoming")]
+            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "incoming"), ("user_id", "=", user.id)]
 
             # ✅ Filtrar por responsable si config_picking es 'responsible'
-            if config_picking.picking_type == "responsible":
-                search_domain.append(("user_id", "=", user.id))  # Agregar filtro por usuario responsable
+            # if config_picking.picking_type == "responsible":
+            #     search_domain.append(("user_id", "=", user.id))  # Agregar filtro por usuario responsable
 
             # ✅ Obtener lotes (batches)
             batchs = request.env["stock.picking.batch"].sudo().search(search_domain)

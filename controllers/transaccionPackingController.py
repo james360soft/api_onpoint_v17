@@ -18,10 +18,17 @@ class TransaccionDataPacking(http.Controller):
 
             array_batch = []
 
-            # ✅ Verificar si el usuario tiene almacenes permitidos
-            allowed_warehouses = user.allowed_warehouse_ids
-            if not allowed_warehouses:
-                return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
+            # # ✅ Verificar si el usuario tiene almacenes permitidos
+            # allowed_warehouses = user.allowed_warehouse_ids
+            # if not allowed_warehouses:
+            #     return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
+            
+            # Obtener almacenes del usuario
+            allowed_warehouses = obtener_almacenes_usuario(user)
+
+            # Verificar si es un error (diccionario con código y mensaje)
+            if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
+                return allowed_warehouses  # Devolver el error directamente
 
             # ✅ Obtener la estrategia de picking
             picking_strategy = request.env["picking.strategy"].sudo().browse(1)
@@ -536,3 +543,20 @@ def procesar_fecha_naive(fecha_transaccion, zona_horaria_cliente):
     else:
         # Usar la fecha actual del servidor como naive datetime
         return datetime.now().replace(tzinfo=None)
+    
+def obtener_almacenes_usuario(user):
+
+    user_wms = request.env["appwms.users_wms"].sudo().search([("user_id", "=", user.id)], limit=1)
+
+    if not user_wms:
+        return {
+            "code": 401,
+            "msg": "El usuario no tiene permisos o no esta registrado en el módulo de configuraciones en el WMS",
+        }
+
+    allowed_warehouses = user_wms.allowed_warehouse_ids
+
+    if not allowed_warehouses:
+        return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
+
+    return allowed_warehouses

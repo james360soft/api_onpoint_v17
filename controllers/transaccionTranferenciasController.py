@@ -339,8 +339,7 @@ class TransaccionTransferenciasController(http.Controller):
                         if not move.is_done_item:
                             linea_info = {
                                 "id": move.move_id.id if move.move_id else 0,
-                                "id_move": move.move_id.id if move.move_id else 0,
-                                # "id_move": move.id,
+                                "id_move": move.id,
                                 "id_transferencia": picking.id,
                                 "batch_id": picking.id,  # ✅
                                 "id_product": product.id,
@@ -464,7 +463,8 @@ class TransaccionTransferenciasController(http.Controller):
                     transferencia_info["numero_lineas"] = len(transferencia_info["lineas_transferencia"])
                     # transferencia_info["numero_items"] = sum(l["quantity_to_transfer"] for l in transferencia_info["lineas_transferencia"])
 
-                    array_transferencias.append(transferencia_info)
+                    if transferencia_info["lineas_transferencia"]:
+                        array_transferencias.append(transferencia_info)
 
             return {"code": 200, "result": array_transferencias}
 

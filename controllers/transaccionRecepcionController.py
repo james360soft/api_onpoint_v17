@@ -325,6 +325,256 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
+    @http.route("/api/recepciones/batchs", auth="user", type="json", methods=["GET"])
+    def get_recepciones_batch(self):
+        try:
+            user = request.env.user
+
+            # ✅ Validar usuario
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            # ✅ Obtener estrategia de picking
+            picking_strategy = request.env["picking.strategy"].sudo().browse(1)
+
+
+            # ✅ Criterios de búsqueda para los lotes
+            search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "incoming"), ("user_id", "in", [user.id, False])]
+
+            # ✅ Obtener lotes (batches)
+            batchs = request.env["stock.picking.batch"].sudo().search(search_domain)
+
+            # ✅ Verificar si no hay lotes encontrados
+            if not batchs:
+                return {"code": 200, "msg": "No tienes batches asignados", "result": []}
+
+            array_batch = []
+            for batch in batchs:
+                # ✅ Obtener movimientos unificados
+                move_unified_ids = request.env["move.line.unified"].sudo().search([
+                    ("stock_picking_batch_id", "=", batch.id), 
+                    # ("location_id", "in", user_location_ids), 
+                    ("is_done_item", "=", False)
+                ])
+
+                if not move_unified_ids:
+                    continue
+
+                # Verificar si hay pickings y obtener orígenes
+                origins_list = []
+                if batch.picking_ids:
+                    for picking in batch.picking_ids:
+                        if picking.origin:
+                            origins_list.append({
+                                "name": picking.origin,
+                                "id": picking.id,
+                                "id_batch": batch.id,
+                            })
+
+                # ✅ Leer detalles de los movimientos
+                stock_moves = move_unified_ids.read()
+
+                # ✅ Crear la información básica del batch
+                batch_info = {
+                    "id": batch.id,
+                    "name": batch.name or "",
+                    "user_name": user.name,
+                    "user_id": user.id,
+                    "order_by": picking_strategy.picking_priority_app,
+                    "order_picking": picking_strategy.picking_order_app,
+                    "scheduleddate": batch.scheduled_date or "",
+                    "state": batch.state or "",
+                    "picking_type_id": batch.picking_type_id.id if batch.picking_type_id else 0,
+                    "picking_type_name": batch.picking_type_id.display_name if batch.picking_type_id else "N/A",
+                    "picking_type_code": "incoming",  # Similar al endpoint de recepciones
+                    "observation": "",
+                    "is_wave": batch.is_wave,
+                    "location_id": batch.location_id.id if batch.location_id else 0,
+                    "location_name": batch.location_id.display_name if batch.location_id else "SIN-MUELLE",
+                    "location_barcode": batch.location_id.barcode or "",
+                    "warehouse_id": batch.picking_type_id.warehouse_id.id if batch.picking_type_id and batch.picking_type_id.warehouse_id else 0,
+                    "warehouse_name": batch.picking_type_id.warehouse_id.name if batch.picking_type_id and batch.picking_type_id.warehouse_id else "",
+                    "numero_lineas": len(stock_moves),
+                    "numero_items": sum(move["product_uom_qty"] for move in stock_moves),
+                    "start_time_pick": batch.start_time_pick or "",
+                    "end_time_pick": batch.end_time_pick or "",
+                    "priority": batch.priority if hasattr(batch, "priority") else "",
+                    "zona_entrega": batch.picking_ids[0].delivery_zone_id.name if batch.picking_ids and batch.picking_ids[0].delivery_zone_id else "SIN-ZONA",
+                    "origin": origins_list,
+                    "lineas_batch": [],  # Similar a lineas_recepcion
+                    "lineas_batch_enviadas": [],  # Similar a lineas_recepcion_enviadas
+                }
+
+                # ✅ Precarga de productos y ubicaciones para optimizar
+                product_ids = {move["product_id"][0] for move in stock_moves}
+                products = {prod.id: prod for prod in request.env["product.product"].sudo().browse(product_ids)}
+
+                location_ids = {move["location_id"][0] for move in stock_moves}
+                location_ids.update({move["location_dest_id"][0] for move in stock_moves})
+                locations_dict = {loc.id: loc for loc in request.env["stock.location"].sudo().browse(location_ids)}
+
+                # ✅ Procesar cada movimiento
+                for move in stock_moves:
+                    product = products.get(move["product_id"][0])
+                    location = locations_dict.get(move["location_id"][0])
+                    location_dest = locations_dict.get(move["location_dest_id"][0])
+
+                    # ✅ Obtener códigos de barras adicionales
+                    array_barcodes = []
+                    if hasattr(product, "barcode_ids") and product.barcode_ids:
+                        array_barcodes = [
+                            {
+                                "barcode": barcode.name,
+                                "id_move": move["id"],
+                                "id_product": product.id,
+                                "batch_id": batch.id,
+                            }
+                            for barcode in product.barcode_ids
+                            if barcode.name
+                        ]
+
+                    # ✅ Obtener empaques del producto
+                    array_packing = []
+                    if hasattr(product, "packaging_ids") and product.packaging_ids:
+                        array_packing = [
+                            {
+                                "barcode": pack.barcode,
+                                "cantidad": pack.qty,
+                                "id_move": move["id"],
+                                "id_product": product.id,
+                                "batch_id": batch.id,
+                            }
+                            for pack in product.packaging_ids
+                            if pack.barcode
+                        ]
+
+                    # ✅ Buscar el picking asociado al batch
+                    picking = request.env["stock.picking"].sudo().search([("batch_id", "=", batch.id)], limit=1)
+                    picking_id = picking.id if picking else 0
+
+                    # ✅ Obtener información de zona de entrega
+                    delivery_zone_id = picking.delivery_zone_id.id if picking and picking.delivery_zone_id else 0
+                    delivery_zone_name = picking.delivery_zone_id.display_name if picking and picking.delivery_zone_id else "SIN-ZONA"
+
+                    # ✅ Obtener información de lote y fecha de vencimiento
+                    lot_id = move["lot_id"][0] if move["lot_id"] else 0
+                    lot_name = move["lot_id"][1] if move["lot_id"] and len(move["lot_id"]) > 1 else ""
+                    expiration_date = ""
+                    if lot_id:
+                        lot = request.env["stock.lot"].sudo().browse(lot_id)
+                        if hasattr(lot, "expiration_date"):
+                            expiration_date = lot.expiration_date
+
+                    cantidad_faltante = move["product_uom_qty"] - move["qty_done"]
+
+                    # ✅ Crear la línea del batch (similar a linea_recepcion)
+                    batch_info["lineas_batch"].append({
+                        "id": move["id"],
+                        "id_move": move["id"],
+                        "id_batch": batch.id,
+                        "state": "assigned",  # Estado estándar para líneas asignadas
+                        "product_id": product.id or 0,
+                        "product_name": product.name or "",
+                        "product_code": product.default_code if product else "",
+                        "product_barcode": product.barcode or "",
+                        "product_tracking": product.tracking if product else "",
+                        "fecha_vencimiento": expiration_date,
+                        "dias_vencimiento": product.expiration_time if hasattr(product, "expiration_time") else "",
+                        "other_barcodes": array_barcodes,
+                        "product_packing": array_packing,
+                        "quantity_ordered": move["product_uom_qty"],
+                        "cantidad_faltante" : cantidad_faltante,
+                        "quantity_to_receive": move["product_uom_qty"],
+                        "uom": product.uom_id.name if product and product.uom_id else "UND",
+                        "location_dest_id": move["location_dest_id"][0],
+                        "location_dest_name": location_dest.display_name or "",
+                        "location_dest_barcode": location_dest.barcode or "",
+                        "location_id": move["location_id"][0],
+                        "location_name": location.display_name if location else "",
+                        "location_barcode": location.barcode or "",
+                        "weight": product.weight if product else 0,
+                        "rimoval_priority": location.priority_picking_desplay if location else "",
+                        "lot_id": lot_id,
+                        "lot_name": lot_name,
+                        "zona_entrega": delivery_zone_name,
+                        "id_zona_entrega": delivery_zone_id,
+                        "picking_id": picking_id,
+                        "picking_name": picking.display_name if picking else "",
+                        "origin": picking.origin or "" if picking else "",
+                    })
+
+                # ✅ Buscar movimientos ya procesados (is_done_item = True)
+                done_move_unified_ids = request.env["move.line.unified"].sudo().search([
+                    ("stock_picking_batch_id", "=", batch.id), 
+                    ("is_done_item", "=", True)
+                ])
+
+                # ✅ Procesar movimientos ya completados
+                if done_move_unified_ids:
+                    done_stock_moves = done_move_unified_ids.read([
+                        "product_id", "lot_id", "location_id", "location_dest_id", "product_uom_qty", 
+                        "date_transaction", "new_observation", "time", "user_operator_id"
+                    ])
+                    
+                    for done_move in done_stock_moves:
+                        product = products.get(done_move["product_id"][0]) if done_move["product_id"] else None
+                        location = locations_dict.get(done_move["location_id"][0]) if done_move["location_id"] else None
+                        location_dest = locations_dict.get(done_move["location_dest_id"][0]) if done_move["location_dest_id"] else None
+                        
+                        # Información del lote
+                        lot_id = done_move["lot_id"][0] if done_move.get("lot_id") else 0
+                        lot_name = done_move["lot_id"][1] if done_move.get("lot_id") and len(done_move["lot_id"]) > 1 else ""
+                        expiration_date = ""
+                        
+                        if lot_id:
+                            lot = request.env["stock.lot"].sudo().browse(lot_id)
+                            if hasattr(lot, "expiration_date"):
+                                expiration_date = lot.expiration_date
+                        
+                        # Crear entrada para línea completada
+                        batch_info["lineas_batch_enviadas"].append({
+                            "id": done_move["id"],
+                            "id_move_line": done_move["id"],
+                            "id_move": done_move["id"],
+                            "id_batch": batch.id,
+                            "product_id": done_move["product_id"][0] if done_move["product_id"] else 0,
+                            "product_name": done_move["product_id"][1] if done_move["product_id"] and len(done_move["product_id"]) > 1 else "N/A",
+                            "product_code": product.default_code if product else "",
+                            "product_barcode": product.barcode if product else "",
+                            "product_tracking": product.tracking if product else "",
+                            "quantity_ordered": done_move["product_uom_qty"],
+                            "quantity_done": done_move["product_uom_qty"],
+                            "uom": product.uom_id.name if product and product.uom_id else "UND",
+                            "location_dest_id": done_move["location_dest_id"][0] if done_move["location_dest_id"] else 0,
+                            "location_dest_name": location_dest.display_name if location_dest else "",
+                            "location_dest_barcode": location_dest.barcode if location_dest else "",
+                            "location_id": done_move["location_id"][0] if done_move["location_id"] else 0,
+                            "location_name": location.display_name if location else "",
+                            "location_barcode": location.barcode if location else "",
+                            "is_done_item": True,
+                            "date_transaction": done_move.get("date_transaction", ""),
+                            "observation": done_move.get("new_observation", ""),
+                            "time": done_move.get("time", ""),
+                            "user_operator_id": done_move.get("user_operator_id", [0])[0] if isinstance(done_move.get("user_operator_id"), list) else 0,
+                            "lot_id": lot_id,
+                            "lot_name": lot_name,
+                            "fecha_vencimiento": expiration_date,
+                        })
+                
+                # Solo añadir el batch si tiene líneas pendientes
+                if batch_info["lineas_batch"]:
+                    array_batch.append(batch_info)
+
+            return {"code": 200, "result": array_batch}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+
+        except Exception as err:
+            if "unsupported XML-RPC protocol" in str(err):
+                return {"code": 400, "msg": "Indicar protocolo http o https de url_rpc"}
+            return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
+
     ## GET Transaccion Recepcion por ID
     @http.route("/api/recepciones/<int:id>", auth="user", type="json", methods=["GET"])
     def get_recepcion_by_id(self, id):
@@ -616,119 +866,6 @@ class TransaccionRecepcionController(http.Controller):
 
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
-
-    ## POST Enviar Recepcion
-    # @http.route("/api/send_recepcion", auth="user", type="json", methods=["POST"], csrf=False)
-    # def send_recepcion(self, **auth):
-    #     try:
-    #         user = request.env.user
-
-    #         # ✅ Validar usuario
-    #         if not user:
-    #             return {"code": 400, "msg": "Usuario no encontrado"}
-
-    #         id_recepcion = auth.get("id_recepcion", 0)
-    #         list_items = auth.get("list_items", [])
-
-    #         # ✅ Buscar recepción por ID
-    #         recepcion = request.env["stock.picking"].sudo().search([("id", "=", id_recepcion), ("picking_type_code", "=", "incoming"), ("state", "!=", "done")], limit=1)
-
-    #         if not recepcion:
-    #             return {"code": 400, "msg": f"Recepción no encontrada o ya completada con ID {id_recepcion}"}
-
-    #         array_result = []
-
-    #         for item in list_items:
-    #             move_id = item.get("id_move")
-    #             product_id = item.get("id_producto")
-    #             lote_id = item.get("lote_producto")
-    #             ubicacion_destino = item.get("ubicacion_destino")
-    #             cantidad = item.get("cantidad_separada")
-    #             fecha_transaccion = item.get("fecha_transaccion")
-    #             observacion = item.get("observacion")
-    #             id_operario = item.get("id_operario")
-    #             time_line = item.get("time_line")
-
-    #             # ✅ Validar datos esenciales
-    #             if not product_id or not cantidad:
-    #                 continue
-
-    #             product = request.env["product.product"].sudo().browse(product_id)
-    #             if not product.exists():
-    #                 continue
-
-    #             # Si tienes un move_id en los datos de entrada
-    #             if move_id:
-    #                 # En Odoo 17, move_lines cambió a move_ids
-    #                 move = recepcion.move_ids.filtered(lambda m: m.id == move_id)
-    #             else:
-    #                 # Fallback al método actual
-    #                 move = recepcion.move_ids.filtered(lambda m: m.product_id.id == product_id)
-
-    #             if not move:
-    #                 return {"code": 400, "msg": f"El producto {product.name} no está en la recepción"}
-
-    #             move_line_vals = {
-    #                 "picking_id": recepcion.id,
-    #                 "move_id": move.id,
-    #                 "product_id": product.id,
-    #                 "quantity": cantidad,
-    #                 "location_id": move.location_id.id,  # Ubicación de origen
-    #                 "location_dest_id": ubicacion_destino or move.location_dest_id.id,  # Ubicación de destino
-    #                 # En Odoo 17, product_uom cambió a product_uom_id
-    #                 "product_uom_id": move.product_uom.id,
-    #             }
-
-    #             # Inicializar lot como None
-    #             lot = None
-
-    #             # ✅ Validar si el producto tiene seguimiento por lotes
-    #             if product.tracking == "lot":
-    #                 if not lote_id:
-    #                     return {"code": 400, "msg": f"El producto {product.name} requiere un lote"}
-    #                 else:
-    #                     # En Odoo 17, stock.production.lot cambió a stock.lot
-    #                     lot = request.env["stock.lot"].sudo().browse(lote_id)
-    #                     if not lot.exists():
-    #                         return {"code": 400, "msg": f"Lote no encontrado para el producto {product.name}"}
-
-    #                     # En Odoo 17, lot_id cambió a lot_id
-    #                     move_line_vals["lot_id"] = lot.id
-
-    #             # ✅ Crear la línea de movimiento
-    #             # En Odoo 17, stock.move.line sigue siendo el mismo modelo
-    #             move_line = request.env["stock.move.line"].sudo().create(move_line_vals)
-
-    #             if move_line:
-    #                 # registrar los campos date_transaction new_observation time user_operator_id is_done_item
-    #                 move_line.date_transaction = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
-    #                 move_line.new_observation = observacion
-    #                 move_line.time = time_line
-    #                 move_line.user_operator_id = id_operario
-    #                 move_line.is_done_item = True
-
-    #             array_result.append(
-    #                 {
-    #                     "producto": product.name,
-    #                     "cantidad": cantidad,
-    #                     "lote": lot.name if lot else "",
-    #                     "ubicacion_destino": ubicacion_destino,
-    #                     "fecha_transaccion": fecha_transaccion,
-    #                     "date_transaction": move_line.date_transaction,
-    #                     "new_observation": move_line.new_observation,
-    #                     "time": move_line.time,
-    #                     "user_operator_id": move_line.user_operator_id.id,
-    #                     "is_done_item": move_line.is_done_item,
-    #                 }
-    #             )
-
-    #         # # ✅ Validar recepción (marcarla como completa)
-    #         # recepcion.sudo().button_validate()
-
-    #         return {"code": 200, "result": array_result}
-
-    #     except Exception as e:
-    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
     @http.route("/api/send_recepcion", auth="user", type="json", methods=["POST"], csrf=False)
     def send_recepcion(self, **auth):
