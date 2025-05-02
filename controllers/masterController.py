@@ -170,10 +170,6 @@ class MasterData(http.Controller):
             except ValueError:
                 return {"code": 400, "msg": "Formato de start_time inválido. Debe ser 'YYYY-MM-DD HH:MM:SS'"}
 
-            # Validar que el start_time no sea en el futuro
-            # if start_time_dt > datetime.now():
-            #     return {"code": 400, "msg": "start_time no puede ser en el futuro"}
-
             if picking[field_name]:
                 # Validar que el campo ya tenga un valor
                 return {"code": 400, "msg": f"El campo '{field_name}' ya tiene un valor registrado"}
