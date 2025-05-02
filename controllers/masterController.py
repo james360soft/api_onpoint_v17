@@ -174,6 +174,10 @@ class MasterData(http.Controller):
             # if start_time_dt > datetime.now():
             #     return {"code": 400, "msg": "start_time no puede ser en el futuro"}
 
+            if picking[field_name]:
+                # Validar que el campo ya tenga un valor
+                return {"code": 400, "msg": f"El campo '{field_name}' ya tiene un valor registrado"}
+
             # Guardar start_time
             picking.sudo().write({field_name: start_time_dt})
 

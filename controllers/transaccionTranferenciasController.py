@@ -370,7 +370,8 @@ class TransaccionTransferenciasController(http.Controller):
                                 "pedido": picking.name,
                                 "pedido_id": picking.id,
                                 "origin": picking.origin or "",
-                                "lote_id": move.lot_id.id if move.lot_id else "",
+                                "lote_id": move.lot_id.id or 0,
+                                "lote": move.lot_id.name or "",
                                 # "is_done_item": False,
                                 # "date_transaction": "",
                                 # "observation": "",
@@ -379,17 +380,15 @@ class TransaccionTransferenciasController(http.Controller):
                                 # "expire_date": move.lot_id.expiration_date or "",
                             }
 
-                            if move.lot_id:
-                                linea_info.update({"lot_id": [move.lot_id.id, move.lot_id.name]})
-                            else:
-                                linea_info.update(
-                                    {
-                                        "lot_id": [
-                                            0,
-                                            "N/A",
-                                        ],
-                                    }
-                                )
+                            # if move.lot_id:
+                            #     linea_info.update({"lote": move.lot_id.name, "lot_id": move.lot_id.id or 0})
+                            # else:
+                            #     linea_info.update(
+                            #         {
+                            #             "lote": "",
+                            #             "lot_id": 0,
+                            #         }
+                            #     )
 
                             transferencia_info["lineas_transferencia"].append(linea_info)
 
@@ -438,6 +437,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "pedido_id": picking.id,
                             "origin": picking.origin or "",
                             "lote_id": move_line.lot_id.id or "",
+                            "lote": move_line.lot_id.name or "",
                             # "is_done_item": move_line.is_done_item,
                             # "date_transaction": move_line.date_transaction or "",
                             # "observation": move_line.new_observation or "",
@@ -446,17 +446,17 @@ class TransaccionTransferenciasController(http.Controller):
                             # "expire_date": move_line.lot_id.expiration_date or "",
                         }
 
-                        if move_line.lot_id:
-                            linea_info.update({"lot_id": [move_line.lot_id.id, move_line.lot_id.name]})
-                        else:
-                            linea_info.update(
-                                {
-                                    "lot_id": [
-                                        0,
-                                        "N/A",
-                                    ],
-                                }
-                            )
+                        # if move_line.lot_id:
+                        #     linea_info.update({"lot_id": [move_line.lot_id.id, move_line.lot_id.name]})
+                        # else:
+                        #     linea_info.update(
+                        #         {
+                        #             "lot_id": [
+                        #                 0,
+                        #                 "N/A",
+                        #             ],
+                        #         }
+                        #     )
 
                         transferencia_info["lineas_transferencia_enviadas"].append(linea_info)
 
@@ -1019,7 +1019,7 @@ class TransaccionTransferenciasController(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
-        
+
     @http.route("/api/send_transfer/pick", auth="user", type="json", methods=["POST"], csrf=False)
     def send_transfer_pick(self, **auth):
         try:
