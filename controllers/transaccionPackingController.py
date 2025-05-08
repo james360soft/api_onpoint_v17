@@ -332,7 +332,6 @@ class TransaccionDataPacking(http.Controller):
 
                 # poner la observacion en minuscula
                 
-
                 move_line = request.env["stock.move.line"].sudo().browse(id_move)
 
                 if move_line.exists():

@@ -33,7 +33,7 @@ class TransaccionTransferenciasController(http.Controller):
                             ("picking_type_code", "=", "internal"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", ["INT", "ALT"]),
-                            ("user_id", "in", [user.id, False]),
+                            ("responsable_id", "in", [user.id, False]),
                         ]
                     )
                 )
@@ -65,8 +65,8 @@ class TransaccionTransferenciasController(http.Controller):
                         "priority": picking.priority,
                         "warehouse_id": warehouse.id,
                         "warehouse_name": warehouse.name,
-                        "responsable_id": picking.user_id.id or 0,
-                        "responsable": picking.user_id.name or "",
+                        "responsable_id": picking.responsable_id.id or 0,
+                        "responsable": picking.responsable_id.name or "",
                         "picking_type": picking.picking_type_id.name,
                         "start_time_transfer": picking.start_time_transfer or "",
                         "end_time_transfer": picking.end_time_transfer or "",
@@ -241,7 +241,7 @@ class TransaccionTransferenciasController(http.Controller):
                             ("picking_type_code", "=", "internal"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", ["PICK"]),
-                            ("user_id", "in", [user.id, False]),
+                            ("responsable_id", "in", [user.id, False]),
                         ]
                     )
                 )
@@ -273,8 +273,8 @@ class TransaccionTransferenciasController(http.Controller):
                         "priority": picking.priority,
                         "warehouse_id": warehouse.id,
                         "warehouse_name": warehouse.name,
-                        "responsable_id": picking.user_id.id or 0,
-                        "responsable": picking.user_id.name or "",
+                        "responsable_id": picking.responsable_id.id or 0,
+                        "responsable": picking.responsable_id.name or "",
                         "picking_type": picking.picking_type_id.name,
                         "start_time_transfer": picking.start_time_transfer or "",
                         "end_time_transfer": picking.end_time_transfer or "",
@@ -351,7 +351,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "dias_vencimiento": product.expiration_time or "",
                                 "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
                                 "product_packing": [{"barcode": p.barcode, "cantidad": p.qty, "id_product": p.product_id.id, "id_move": move.id, "batch_id": picking.id} for p in getattr(product, "packaging_ids", [])],
-                                "quantity": quantity_ordered,
+                                "quantity": quantity_done,
                                 "quantity_to_transfer": quantity_ordered,
                                 # "quantity_done": quantity_done,
                                 "cantidad_faltante": cantidad_faltante,
@@ -517,7 +517,7 @@ class TransaccionTransferenciasController(http.Controller):
                             # ("picking_type_code", "=", "internal"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", [sequence_code]),
-                            ("user_id", "in", [user.id, False]),
+                            ("responsable_id", "in", [user.id, False]),
                         ]
                     )
                 )
@@ -549,8 +549,8 @@ class TransaccionTransferenciasController(http.Controller):
                         "priority": picking.priority,
                         "warehouse_id": warehouse.id,
                         "warehouse_name": warehouse.name,
-                        "responsable_id": picking.user_id.id or 0,
-                        "responsable": picking.user_id.name or "",
+                        "responsable_id": picking.responsable_id.id or 0,
+                        "responsable": picking.responsable_id.name or "",
                         "picking_type": picking.picking_type_id.name,
                         "start_time_transfer": picking.start_time_transfer or "",
                         "end_time_transfer": picking.end_time_transfer or "",
@@ -838,7 +838,7 @@ class TransaccionTransferenciasController(http.Controller):
             if not transferencia:
                 return {"code": 404, "msg": "Transferencia no encontrada"}
 
-            if transferencia.user_id:
+            if transferencia.responsable_id:
                 return {"code": 400, "msg": "La transferencia ya tiene un responsable asignado"}
 
             # ✅ Buscar el usuario responsable
@@ -849,7 +849,7 @@ class TransaccionTransferenciasController(http.Controller):
                 return {"code": 404, "msg": "Usuario responsable no encontrado"}
 
             try:
-                transferencia.write({"user_id": id_responsable})
+                transferencia.write({"responsable_id": id_responsable})
 
                 return {"code": 200, "msg": "Responsable asignado correctamente"}
 
@@ -1625,8 +1625,8 @@ class TransaccionTransferenciasController(http.Controller):
                 "priority": picking.priority,
                 "warehouse_id": picking.picking_type_id.warehouse_id.id,
                 "warehouse_name": picking.picking_type_id.warehouse_id.name,
-                "responsable_id": picking.user_id.id or 0,
-                "responsable": picking.user_id.name or "",
+                "responsable_id": picking.responsable_id.id or 0,
+                "responsable": picking.responsable_id.name or "",
                 "picking_type": picking.picking_type_id.name,
                 "start_time_transfer": picking.start_time_transfer or "",
                 "end_time_transfer": picking.end_time_transfer or "",
@@ -2075,6 +2075,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "location_id": id_ubicacion_origen,
                         "location_dest_id": id_ubicacion_destino,
                         "user_id": id_responsable,
+                        "responsable_id": id_responsable,
                         "origin": f"Transferencia creada por {user.name}",
                     }
                 )
