@@ -22,7 +22,7 @@ class TransaccionDataPacking(http.Controller):
             # allowed_warehouses = user.allowed_warehouse_ids
             # if not allowed_warehouses:
             #     return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
-            
+
             # Obtener almacenes del usuario
             allowed_warehouses = obtener_almacenes_usuario(user)
 
@@ -74,6 +74,12 @@ class TransaccionDataPacking(http.Controller):
                             "user_name": batch.user_id.name if batch.user_id else "Desconocido",
                         }
 
+                        manejo_temperatura = False
+
+                        productos_con_temperatura = batch.move_line_ids.mapped("product_id").filtered(lambda p: hasattr(p, "temperature_control") and p.temperature_control)
+                        if productos_con_temperatura:
+                            manejo_temperatura = True
+
                         array_batch_temp = {
                             "id": batch.id,
                             "name": batch.name,
@@ -91,6 +97,8 @@ class TransaccionDataPacking(http.Controller):
                             # "zona_entrega_tms": batch.picking_ids[0].delivery_zone_tms if batch.picking_ids and batch.picking_ids[0].delivery_zone_tms else "N/A",
                             "zona_entrega_tms": "",
                             # "order_tms": batch.picking_ids[0].order_tms if batch.picking_ids and batch.picking_ids[0].order_tms else "N/A",
+                            "maneja_temperatura": manejo_temperatura,
+                            "temperatura": batch.temperature_batch if hasattr(batch, "temperature_batch") else "",
                             "order_tms": "",
                             "lista_pedidos": [],
                         }
@@ -226,7 +234,7 @@ class TransaccionDataPacking(http.Controller):
                                         "peso": product.weight if product else 0,
                                         "lote_id": [lot.id, lot.name if lot else ""] if lot else [],
                                         "observacion": move_line.new_observation_packing,
-                                        "weight" : product.weight if product else 0,
+                                        "weight": product.weight if product else 0,
                                         "is_sticker": pack.is_sticker,
                                         "is_certificate": pack.is_certificate,
                                         "id_package": pack.id,
@@ -286,7 +294,6 @@ class TransaccionDataPacking(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
-
     @http.route("/api/send_packing", auth="user", type="json", methods=["POST"])
     def send_packing(self, **auth):
         try:
@@ -331,12 +338,12 @@ class TransaccionDataPacking(http.Controller):
                 fecha_transaccion = move.get("fecha_transaccion", "")
 
                 # poner la observacion en minuscula
-                
+
                 move_line = request.env["stock.move.line"].sudo().browse(id_move)
 
                 if move_line.exists():
                     if move_line.quantity >= cantidad_separada:
-                        
+
                         if observacion.lower() != "sin novedad":
                             move_line.write(
                                 {
@@ -435,6 +442,30 @@ class TransaccionDataPacking(http.Controller):
             return {"code": 400, "msg": f"Error de validación: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
+
+    @http.route("/api/send_temperatura/batch", auth="user", type="json", methods=["POST"])
+    def send_temperatura_batch(self, **auth):
+        try:
+            # ✅ Validar autenticación
+            user = request.env.user
+            if not user:
+                return {"code": 401, "msg": "Usuario no autenticado"}
+
+            id_batch = auth.get("id_batch")
+            temperatura = auth.get("temperatura", 0)
+
+            # ✅ Validar si el id_batch existe
+            batch = request.env["stock.picking.batch"].sudo().browse(id_batch)
+            if not batch.exists():
+                return {"code": 400, "msg": f"El id_batch {id_batch} no existe"}
+
+            # ✅ Actualizar la temperatura del lote
+            batch.write({"temperature_batch": temperatura})
+
+            return {"code": 200, "msg": "Temperatura actualizada correctamente"}
+
+        except Exception as e:
+            return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
     ### POST Transacciones para desempacar paquete en packing
     @http.route("/api/unpacking", auth="user", type="json", methods=["POST"])
@@ -542,7 +573,8 @@ def procesar_fecha_naive(fecha_transaccion, zona_horaria_cliente):
     else:
         # Usar la fecha actual del servidor como naive datetime
         return datetime.now().replace(tzinfo=None)
-    
+
+
 def obtener_almacenes_usuario(user):
 
     user_wms = request.env["appwms.users_wms"].sudo().search([("user_id", "=", user.id)], limit=1)

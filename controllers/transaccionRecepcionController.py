@@ -1,3 +1,4 @@
+from calendar import c
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import AccessError
@@ -62,6 +63,12 @@ class TransaccionRecepcionController(http.Controller):
                     # Calcular número de ítems (suma total de cantidades)
                     numero_items = sum(move.product_uom_qty for move in movimientos_pendientes)
 
+                    manejo_temperatura = False
+
+                    productos_con_temperatura = picking.move_ids.mapped("product_id").filtered(lambda p: hasattr(p, "temperature_control") and p.temperature_control)
+                    if productos_con_temperatura:
+                        manejo_temperatura = True
+
                     recepcion_info = {
                         "id": picking.id,
                         "name": picking.name,  # Nombre de la recepción
@@ -93,6 +100,8 @@ class TransaccionRecepcionController(http.Controller):
                         "end_time_reception": picking.end_time_reception or "",
                         "picking_type_code": picking.picking_type_code,
                         "show_check_availability": picking.show_check_availability if hasattr(picking, "show_check_availability") else False,
+                        "maneja_temperatura": manejo_temperatura,
+                        "temperatura": picking.temperature if hasattr(picking, "temperature") else 0,
                         "lineas_recepcion": [],
                         "lineas_recepcion_enviadas": [],
                     }
@@ -324,272 +333,6 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
-    # @http.route("/api/recepciones/batchs", auth="user", type="json", methods=["GET"])
-    # def get_recepciones_batch(self):
-    #     try:
-    #         user = request.env.user
-
-    #         # ✅ Validar usuario
-    #         if not user:
-    #             return {"code": 400, "msg": "Usuario no encontrado"}
-
-    #         # ✅ Obtener estrategia de picking
-    #         picking_strategy = request.env["picking.strategy"].sudo().browse(1)
-
-    #         # ✅ Criterios de búsqueda para los lotes
-    #         search_domain = [("state", "=", "in_progress"), ("picking_type_code", "=", "incoming"), ("user_id", "in", [user.id, False])]
-
-    #         # ✅ Obtener lotes (batches)
-    #         batchs = request.env["stock.picking.batch"].sudo().search(search_domain)
-
-    #         # ✅ Verificar si no hay lotes encontrados
-    #         if not batchs:
-    #             return {"code": 200, "msg": "No tienes batches asignados", "result": []}
-
-    #         array_batch = []
-    #         for batch in batchs:
-    #             # ✅ Obtener movimientos unificados
-    #             move_unified_ids = (
-    #                 request.env["move.line.unified"]
-    #                 .sudo()
-    #                 .search(
-    #                     [
-    #                         ("stock_picking_batch_id", "=", batch.id),
-    #                         # ("location_id", "in", user_location_ids),
-    #                         ("is_done_item", "=", False),
-    #                     ]
-    #                 )
-    #             )
-
-    #             if not move_unified_ids:
-    #                 continue
-
-    #             # Verificar si hay pickings y obtener orígenes
-    #             origins_list = []
-    #             if batch.picking_ids:
-    #                 for picking in batch.picking_ids:
-    #                     if picking.origin:
-    #                         origins_list.append(
-    #                             {
-    #                                 "name": picking.origin,
-    #                                 "id": picking.id,
-    #                                 "id_batch": batch.id,
-    #                             }
-    #                         )
-
-    #             # ✅ Leer detalles de los movimientos
-    #             stock_moves = move_unified_ids.read()
-
-    #             # ✅ Crear la información básica del batch
-    #             batch_info = {
-    #                 "id": batch.id,
-    #                 "name": batch.name or "",
-    #                 "user_name": user.name,
-    #                 "user_id": user.id,
-    #                 "order_by": picking_strategy.picking_priority_app,
-    #                 "order_picking": picking_strategy.picking_order_app,
-    #                 "fecha_creacion": batch.create_date or "",
-    #                 "state": batch.state or "",
-    #                 "picking_type_id": batch.picking_type_id.id if batch.picking_type_id else 0,
-    #                 "picking_type": batch.picking_type_id.display_name if batch.picking_type_id else "N/A",
-    #                 "picking_type_code": "incoming",  # Similar al endpoint de recepciones
-    #                 "observation": "",
-    #                 "is_wave": batch.is_wave,
-    #                 "location_id": batch.location_id.id if batch.location_id else 0,
-    #                 "location_name": batch.location_id.display_name if batch.location_id else "SIN-MUELLE",
-    #                 "location_barcode": batch.location_id.barcode or "",
-    #                 "warehouse_id": batch.picking_type_id.warehouse_id.id if batch.picking_type_id and batch.picking_type_id.warehouse_id else 0,
-    #                 "warehouse_name": batch.picking_type_id.warehouse_id.name if batch.picking_type_id and batch.picking_type_id.warehouse_id else "",
-    #                 "numero_lineas": len(stock_moves),
-    #                 "numero_items": sum(move["product_uom_qty"] for move in stock_moves),
-    #                 "start_time_reception": batch.start_time_pick or "",
-    #                 "end_time_reception": batch.end_time_pick or "",
-    #                 "priority": batch.priority if hasattr(batch, "priority") else "",
-    #                 "zona_entrega": batch.picking_ids[0].delivery_zone_id.name if batch.picking_ids and batch.picking_ids[0].delivery_zone_id else "SIN-ZONA",
-    #                 "origin": origins_list,
-    #                 "responsable_id": batch.user_id.id or 0,
-    #                 "responsable": batch.user_id.name or "",
-    #                 "proveedor_id": batch.picking_ids[0].partner_id.id or 0,
-    #                 "proveedor": batch.picking_ids[0].partner_id.name or "",
-    #                 "location_dest_id": batch.picking_ids[0].location_dest_id.id or 0,
-    #                 "location_dest_name": batch.picking_ids[0].location_dest_id.display_name or "",
-    #                 "backorder_id": 0,
-    #                 "backorder_name": "",
-    #                 "purchase_order_id": batch.picking_ids[0].purchase_id.id or 0,
-    #                 "purchase_order_name": batch.picking_ids[0].purchase_id.name or "",
-    #                 "show_check_availability": batch.show_check_availability if hasattr(batch, "show_check_availability") else False,
-    #                 "lineas_recepcion": [],  # Similar a lineas_recepcion
-    #                 "lineas_recepcion_enviadas": [],  # Similar a lineas_recepcion_enviadas
-    #             }
-
-    #             # ✅ Precarga de productos y ubicaciones para optimizar
-    #             product_ids = {move["product_id"][0] for move in stock_moves}
-    #             products = {prod.id: prod for prod in request.env["product.product"].sudo().browse(product_ids)}
-
-    #             location_ids = {move["location_id"][0] for move in stock_moves}
-    #             location_ids.update({move["location_dest_id"][0] for move in stock_moves})
-    #             locations_dict = {loc.id: loc for loc in request.env["stock.location"].sudo().browse(location_ids)}
-
-    #             # ✅ Procesar cada movimiento
-    #             for move in stock_moves:
-    #                 product = products.get(move["product_id"][0])
-    #                 location = locations_dict.get(move["location_id"][0])
-    #                 location_dest = locations_dict.get(move["location_dest_id"][0])
-
-    #                 # ✅ Obtener códigos de barras adicionales
-    #                 array_barcodes = []
-    #                 if hasattr(product, "barcode_ids") and product.barcode_ids:
-    #                     array_barcodes = [
-    #                         {
-    #                             "barcode": barcode.name,
-    #                             "id_move": move["id"],
-    #                             "id_product": product.id,
-    #                             "batch_id": batch.id,
-    #                         }
-    #                         for barcode in product.barcode_ids
-    #                         if barcode.name
-    #                     ]
-
-    #                 # ✅ Obtener empaques del producto
-    #                 array_packing = []
-    #                 if hasattr(product, "packaging_ids") and product.packaging_ids:
-    #                     array_packing = [
-    #                         {
-    #                             "barcode": pack.barcode,
-    #                             "cantidad": pack.qty,
-    #                             "id_move": move["id"],
-    #                             "id_product": product.id,
-    #                             "batch_id": batch.id,
-    #                         }
-    #                         for pack in product.packaging_ids
-    #                         if pack.barcode
-    #                     ]
-
-    #                 # ✅ Buscar el picking asociado al batch
-    #                 picking = request.env["stock.picking"].sudo().search([("batch_id", "=", batch.id)], limit=1)
-    #                 picking_id = picking.id if picking else 0
-
-    #                 # ✅ Obtener información de zona de entrega
-    #                 delivery_zone_id = picking.delivery_zone_id.id if picking and picking.delivery_zone_id else 0
-    #                 delivery_zone_name = picking.delivery_zone_id.display_name if picking and picking.delivery_zone_id else "SIN-ZONA"
-
-    #                 # ✅ Obtener información de lote y fecha de vencimiento
-    #                 lot_id = move["lot_id"][0] if move["lot_id"] else 0
-    #                 lot_name = move["lot_id"][1] if move["lot_id"] and len(move["lot_id"]) > 1 else ""
-    #                 expiration_date = ""
-    #                 if lot_id:
-    #                     lot = request.env["stock.lot"].sudo().browse(lot_id)
-    #                     if hasattr(lot, "expiration_date"):
-    #                         expiration_date = lot.expiration_date
-
-    #                 cantidad_faltante = move["product_uom_qty"] - move["qty_done"]
-
-    #                 # ✅ Crear la línea del batch (similar a linea_recepcion)
-    #                 batch_info["lineas_recepcion"].append(
-    #                     {
-    #                         "id": move["id"],
-    #                         "id_move": move["id"],
-    #                         "id_batch": batch.id,
-    #                         "state": "assigned",  # Estado estándar para líneas asignadas
-    #                         "product_id": product.id or 0,
-    #                         "product_name": product.name or "",
-    #                         "product_code": product.default_code if product else "",
-    #                         "product_barcode": product.barcode or "",
-    #                         "product_tracking": product.tracking if product else "",
-    #                         "fecha_vencimiento": expiration_date,
-    #                         "dias_vencimiento": product.expiration_time if hasattr(product, "expiration_time") else "",
-    #                         "other_barcodes": array_barcodes,
-    #                         "product_packing": array_packing,
-    #                         "quantity_ordered": move["product_uom_qty"],
-    #                         "cantidad_faltante": cantidad_faltante,
-    #                         "quantity_to_receive": move["product_uom_qty"],
-    #                         "uom": product.uom_id.name if product and product.uom_id else "UND",
-    #                         "location_dest_id": move["location_dest_id"][0],
-    #                         "location_dest_name": location_dest.display_name or "",
-    #                         "location_dest_barcode": location_dest.barcode or "",
-    #                         "location_id": move["location_id"][0],
-    #                         "location_name": location.display_name if location else "",
-    #                         "location_barcode": location.barcode or "",
-    #                         "weight": product.weight if product else 0,
-    #                         "rimoval_priority": location.priority_picking_desplay if location else "",
-    #                         "lot_id": lot_id,
-    #                         "lot_name": lot_name,
-    #                         "zona_entrega": delivery_zone_name,
-    #                         "id_zona_entrega": delivery_zone_id,
-    #                         "picking_id": picking_id,
-    #                         "picking_name": picking.display_name if picking else "",
-    #                         "origin": picking.origin or "" if picking else "",
-    #                     }
-    #                 )
-
-    #             # ✅ Buscar movimientos ya procesados (is_done_item = True)
-    #             done_move_unified_ids = request.env["move.line.unified"].sudo().search([("stock_picking_batch_id", "=", batch.id), ("is_done_item", "=", True)])
-
-    #             # ✅ Procesar movimientos ya completados
-    #             if done_move_unified_ids:
-    #                 done_stock_moves = done_move_unified_ids.read(["product_id", "lot_id", "location_id", "location_dest_id", "product_uom_qty", "date_transaction", "new_observation", "time", "user_operator_id"])
-
-    #                 for done_move in done_stock_moves:
-    #                     product = products.get(done_move["product_id"][0]) if done_move["product_id"] else None
-    #                     location = locations_dict.get(done_move["location_id"][0]) if done_move["location_id"] else None
-    #                     location_dest = locations_dict.get(done_move["location_dest_id"][0]) if done_move["location_dest_id"] else None
-
-    #                     # Información del lote
-    #                     lot_id = done_move["lot_id"][0] if done_move.get("lot_id") else 0
-    #                     lot_name = done_move["lot_id"][1] if done_move.get("lot_id") and len(done_move["lot_id"]) > 1 else ""
-    #                     expiration_date = ""
-
-    #                     if lot_id:
-    #                         lot = request.env["stock.lot"].sudo().browse(lot_id)
-    #                         if hasattr(lot, "expiration_date"):
-    #                             expiration_date = lot.expiration_date
-
-    #                     # Crear entrada para línea completada
-    #                     batch_info["lineas_recepcion_enviadas"].append(
-    #                         {
-    #                             "id": done_move["id"],
-    #                             "id_move_line": done_move["id"],
-    #                             "id_move": done_move["id"],
-    #                             "id_batch": batch.id,
-    #                             "product_id": done_move["product_id"][0] if done_move["product_id"] else 0,
-    #                             "product_name": done_move["product_id"][1] if done_move["product_id"] and len(done_move["product_id"]) > 1 else "N/A",
-    #                             "product_code": product.default_code if product else "",
-    #                             "product_barcode": product.barcode if product else "",
-    #                             "product_tracking": product.tracking if product else "",
-    #                             "quantity_ordered": done_move["product_uom_qty"],
-    #                             "quantity_done": done_move["product_uom_qty"],
-    #                             "uom": product.uom_id.name if product and product.uom_id else "UND",
-    #                             "location_dest_id": done_move["location_dest_id"][0] if done_move["location_dest_id"] else 0,
-    #                             "location_dest_name": location_dest.display_name if location_dest else "",
-    #                             "location_dest_barcode": location_dest.barcode if location_dest else "",
-    #                             "location_id": done_move["location_id"][0] if done_move["location_id"] else 0,
-    #                             "location_name": location.display_name if location else "",
-    #                             "location_barcode": location.barcode if location else "",
-    #                             "is_done_item": True,
-    #                             "date_transaction": done_move.get("date_transaction", ""),
-    #                             "observation": done_move.get("new_observation", ""),
-    #                             "time": done_move.get("time", ""),
-    #                             "user_operator_id": done_move.get("user_operator_id", [0])[0] if isinstance(done_move.get("user_operator_id"), list) else 0,
-    #                             "lot_id": lot_id,
-    #                             "lot_name": lot_name,
-    #                             "fecha_vencimiento": expiration_date,
-    #                         }
-    #                     )
-
-    #             # Solo añadir el batch si tiene líneas pendientes
-    #             if batch_info["lineas_recepcion"]:
-    #                 array_batch.append(batch_info)
-
-    #         return {"code": 200, "result": array_batch}
-
-    #     except AccessError as e:
-    #         return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
-
-    #     except Exception as err:
-    #         if "unsupported XML-RPC protocol" in str(err):
-    #             return {"code": 400, "msg": "Indicar protocolo http o https de url_rpc"}
-    #         return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
-
     @http.route("/api/recepciones/batchs", auth="user", type="json", methods=["GET"])
     def get_recepciones_batch(self):
         try:
@@ -812,6 +555,8 @@ class TransaccionRecepcionController(http.Controller):
 
                     for done_move in done_stock_moves:
                         product = products.get(done_move["product_id"][0]) if done_move["product_id"] else None
+
+                        product = obtener_info_producto(done_move["product_id"][0]) if done_move.get("product_id") else None
                         # location = locations_dict.get(done_move["location_id"][0]) if done_move["location_id"] else None
                         # location_dest = locations_dict.get(done_move["location_dest_id"][0]) if done_move["location_dest_id"] else None
 
@@ -819,7 +564,6 @@ class TransaccionRecepcionController(http.Controller):
 
                         location_dest = obtener_info_ubicacion(done_move["location_dest_id"][0]) if done_move.get("location_dest_id") else None
                         location = obtener_info_ubicacion(done_move["location_id"][0]) if done_move.get("location_id") else None
-
 
                         # Información del lote
                         lot_id = done_move["lot_id"][0] if done_move.get("lot_id") else 0
@@ -1320,6 +1064,28 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
+    @http.route("/api/send_temperatura", auth="user", type="json", methods=["POST"], csrf=False)
+    def send_temperatura(self, **auth):
+        try:
+            user = request.env.user
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            id = auth.get("id", 0)
+            temperatura = auth.get("temperatura", 0)
+
+            recepcion = request.env["stock.picking"].sudo().search([("id", "=", id)], limit=1)
+
+            if not recepcion:
+                return {"code": 400, "msg": f"No se encontró registro con ID {id}"}
+
+            recepcion.sudo().write({"temperature": temperatura})
+
+            return {"code": 200, "result": "Temperatura registrada correctamente"}
+
+        except Exception as e:
+            return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
     # @http.route("/api/send_recepcion/batch", auth="user", type="json", methods=["POST"], csrf=False)
     # def send_recepcion_batch(self, **auth):
     #     try:
@@ -1499,8 +1265,8 @@ class TransaccionRecepcionController(http.Controller):
                     dividir = True  # Si la observación es "producto en perfecto estado", no dividir
 
                 # Validaciones básicas
-                if not product_id or not cantidad:
-                    array_result.append({"code": 400, "msg": f"Producto o cantidad no especificados para algún ítem"})
+                if not product_id:
+                    array_result.append({"code": 400, "msg": f"Producto no especificado para algún ítem"})
                     continue
 
                 product = request.env["product.product"].sudo().browse(product_id)
@@ -1513,18 +1279,41 @@ class TransaccionRecepcionController(http.Controller):
                     array_result.append({"code": 400, "msg": f"La línea de movimiento con ID {move_id} no existe"})
                     continue
 
+                # si viene el lote_id buscarlo y poner el nombre
+
                 # Validar cantidad
-                if cantidad > move_line.quantity:
-                    array_result.append({"code": 400, "msg": f"La cantidad {cantidad} no puede ser mayor a la cantidad disponible {move_line.quantity} para el producto {product.name}"})
-                    continue
+                # if cantidad > move_line.quantity:
+                #     array_result.append({"code": 400, "msg": f"La cantidad {cantidad} no puede ser mayor a la cantidad disponible {move_line.quantity} para el producto {product.name}"})
+                #     continue
 
                 # Preparar los datos comunes para actualización
                 fecha_procesada = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
                 common_vals = {"location_dest_id": ubicacion_destino, "lot_name": lote_id, "new_observation_packing": observacion, "user_operator_id": id_operario, "time_packing": time_line, "date_transaction_packing": fecha_procesada, "is_done_item_pack": True}
 
-                # CASO 1: Si la cantidad a procesar es menor que la cantidad en la línea Y el parámetro dividir es True,
+                if lote_id:
+                    lot = request.env["stock.lot"].sudo().browse(lote_id)
+                    if not lot.exists():
+                        array_result.append({"code": 400, "msg": f"El lote con ID {lote_id} no existe"})
+                        continue
+                    lote_id = lot.name
+                else:
+                    # eliminarlo de common_vals["lot_name"]
+                    common_vals.pop("lot_name", None)
+
+                if cantidad == 0:
+
+                    # actualizar cantidad = 0  # No se actualiza la cantidad si es cero
+                    common_vals["quantity"] = cantidad
+
+                    # Actualizar la línea existente como procesada
+                    move_line.write(common_vals)
+
+                    # Referencia para el resultado
+                    processed_line = move_line
+
+                # CASO 2: Si la cantidad a procesar es menor que la cantidad en la línea Y el parámetro dividir es True,
                 # dividimos la línea en dos: una procesada y una pendiente
-                if cantidad < move_line.quantity and dividir:
+                elif cantidad < move_line.quantity and dividir:
                     # Guardar la cantidad original antes de modificarla
                     cantidad_original = move_line.quantity
 
@@ -1546,7 +1335,7 @@ class TransaccionRecepcionController(http.Controller):
                     #     "msg": f"Línea dividida y procesada: {cantidad} de {cantidad_original}"
                     # })
 
-                # CASO 2: Si la cantidad a procesar es exactamente igual a la cantidad de la línea O el parámetro dividir es False,
+                # CASO 3: Si la cantidad a procesar es exactamente igual a la cantidad de la línea O el parámetro dividir es False,
                 # simplemente actualizamos la línea existente
                 else:  # cantidad == move_line.quantity o dividir = False
                     # Si dividir es False y la cantidad es menor, simplemente actualizamos la cantidad
@@ -2035,3 +1824,12 @@ def obtener_info_ubicacion(ubicacion_id):
         return {"code": 400, "msg": f"La ubicación con ID {ubicacion_id} no existe"}
 
     return ubicacion
+
+
+def obtener_info_producto(product_id):
+    producto = request.env["product.product"].sudo().browse(product_id)
+
+    if not producto.exists():
+        return {"code": 400, "msg": f"El producto con ID {product_id} no existe"}
+
+    return producto

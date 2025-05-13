@@ -1515,73 +1515,6 @@ class TransaccionTransferenciasController(http.Controller):
             # Registrar el error completo para depuración
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
-    # @http.route("/api/complete_transfer", auth="user", type="json", methods=["POST"], csrf=False)
-    # def completar_transferencia(self, **auth):
-    #     try:
-    #         user = request.env.user
-    #         # ✅ Validar usuario
-    #         if not user:
-    #             return {"code": 400, "msg": "Usuario no encontrado"}
-
-    #         id_transferencia = auth.get("id_transferencia", 0)
-    #         crear_backorder = auth.get("crear_backorder", True)
-
-    #         # ✅ Buscar transferencia por ID
-    #         transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia), ("picking_type_code", "=", "internal"), ("picking_type_id.sequence_code", "=", "INT"), ("state", "=", "assigned")], limit=1)
-
-    #         if not transferencia:
-    #             return {"code": 404, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
-
-    #         # Verificar si hay líneas de movimiento que validar
-    #         if not transferencia.move_ids_without_package:
-    #             return {"code": 400, "msg": "La transferencia no tiene líneas de movimiento"}
-
-    #         # ✅ Intentar validar la transferencia
-    #         result = transferencia.with_context(skip_backorder=not crear_backorder).sudo().button_validate()
-
-    #         if isinstance(result, dict) and result.get("res_model"):
-    #             wizard_model = result.get("res_model")
-    #             wizard_context = result.get("context", {})
-
-    #             # 🟨 1. Backorder Wizard
-    #             if wizard_model == "stock.backorder.confirmation":
-    #                 wizard_vals = {"pick_ids": [(6, 0, [transferencia.id])], "show_transfers": wizard_context.get("default_show_transfers", False)}
-    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
-
-    #                 transferencia.sudo()._action_done()
-
-    #                 # Verificar si se creó una backorder
-    #                 backorder = request.env["stock.picking"].sudo().search([("backorder_id", "=", transferencia.id), ("state", "not in", ["done", "cancel"])], limit=1)
-
-    #                 return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
-
-    #             # 🟨 2. Transferencia inmediata
-    #             elif wizard_model == "stock.immediate.transfer":
-    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({})
-    #                 transferencia.sudo()._action_done()
-
-    #                 return {"code": 200, "msg": "Transferencia completada con éxito", "original_id": transferencia.id, "original_state": transferencia.state}
-
-    #             # 🟨 3. Confirmación por caducidad
-    #             elif wizard_model == "expiry.picking.confirmation":
-    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({})
-    #                 wizard.sudo().process()
-
-    #                 return {"code": 200, "msg": "Transferencia completada con confirmación de caducidad", "original_id": transferencia.id, "original_state": transferencia.state}
-
-    #             # 🚫 Otro wizard no soportado
-    #             else:
-    #                 return {"code": 400, "msg": f"Acción adicional requerida no soportada: {wizard_model}"}
-
-    #         elif isinstance(result, bool) and result:
-    #             # ✅ Transferencia completada directamente sin wizard
-    #             return {"code": 200, "msg": "Transferencia completada directamente", "original_id": transferencia.id, "original_state": transferencia.state}
-    #         else:
-    #             return {"code": 400, "msg": f"No se pudo completar la transferencia: {result}"}
-
-    #     except Exception as e:
-    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
-
     @http.route("/api/comprobar_disponibilidad", auth="user", type="json", methods=["POST"], csrf=False)
     def check_availability(self, **post):
         try:
@@ -2099,8 +2032,15 @@ class TransaccionTransferenciasController(http.Controller):
             )
 
             # Confirmar y asignar
-            picking.action_confirm()
-            picking.action_assign()
+            try:
+                picking.action_confirm()
+            except Exception as e:
+                return {"code": 500, "msg": f"Error al confirmar la transferencia: {str(e)}"}
+
+            try:
+                picking.action_assign()
+            except Exception as e:
+                return {"code": 500, "msg": f"Error al comprobar disponibilidad: {str(e)}"}
 
             move_line = move.move_line_ids and move.move_line_ids[0] or False
 

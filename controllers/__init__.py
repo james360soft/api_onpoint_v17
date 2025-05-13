@@ -5,3 +5,4 @@ from . import transaccionPickingController
 from . import transaccionPackingController
 from . import transaccionRecepcionController
 from . import transaccionTranferenciasController
+from . import transaccionProduccionController
