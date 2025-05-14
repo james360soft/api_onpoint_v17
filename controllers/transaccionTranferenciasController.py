@@ -377,7 +377,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 # "observation": "",
                                 # "time": 0,
                                 # "user_operator_id": 0,
-                                # "expire_date": move.lot_id.expiration_date or "",
+                                "expire_date": move.lot_id.expiration_date or "",
                             }
 
                             # if move.lot_id:
@@ -443,7 +443,7 @@ class TransaccionTransferenciasController(http.Controller):
                             # "observation": move_line.new_observation or "",
                             # "time": move_line.time or 0,
                             # "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
-                            # "expire_date": move_line.lot_id.expiration_date or "",
+                            "expire_date": move_line.lot_id.expiration_date or "",
                         }
 
                         # if move_line.lot_id:
