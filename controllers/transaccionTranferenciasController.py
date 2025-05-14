@@ -1489,12 +1489,18 @@ class TransaccionTransferenciasController(http.Controller):
                     # Procesar según la opción de crear_backorder
                     if crear_backorder:
                         # En Odoo 17, el método process sigue existiendo
-                        wizard.sudo().process()
+                        data = wizard.sudo().process()
+                        if data.get("res_model"):
+                            return {"code": 400, "msg": data.get("res_model")}
+
                         return {"code": 200, "msg": f"Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": wizard.id if wizard else False}
                         # return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
                     else:
                         # En Odoo 17, el método process_cancel_backorder sigue existiendo
-                        wizard.sudo().process_cancel_backorder()
+                        data = wizard.sudo().process_cancel_backorder()
+                        if data.get("res_model"):
+                            return {"code": 400, "msg": data.get("res_model")}
+
                         return {"code": 200, "msg": "Transferencia parcial completada sin crear backorder"}
 
                 # Para asistente de transferencia inmediata
@@ -1510,6 +1516,135 @@ class TransaccionTransferenciasController(http.Controller):
 
             # Si llegamos aquí, button_validate completó la validación sin necesidad de asistentes
             return {"code": 200, "msg": "Transferencia completada correctamente"}
+
+        except Exception as e:
+            # Registrar el error completo para depuración
+            return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
+    ## POST Completar transferencia con fecha de caducidad
+    @http.route("/api/complete_transfer/expire", auth="user", type="json", methods=["POST"], csrf=False)
+    def completar_transferencia_expire(self, **auth):
+        try:
+            user = request.env.user
+            # ✅ Validar usuario
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            id_transferencia = auth.get("id_transferencia", 0)
+            crear_backorder = auth.get("crear_backorder", True)
+
+            transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)], limit=1)
+
+            if not transferencia:
+                return {"code": 400, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
+
+            # Eliminar las lineas que no se tiene is_done_item true
+            lineas_no_enviadas = transferencia.move_line_ids.filtered(lambda l: not l.is_done_item)
+            if lineas_no_enviadas:
+                lineas_no_enviadas.unlink()
+
+            # Función recursiva para manejar wizards en cadena
+            def procesar_wizard(result, transferencia_id, crear_backorder):
+                if not isinstance(result, dict) or not result.get("res_model"):
+                    # Si no es un wizard, simplemente devolvemos "Transferencia completada"
+                    # Refrescamos el objeto transferencia buscándolo nuevamente
+                    transferencia = request.env["stock.picking"].sudo().search([("id", "=", transferencia_id)], limit=1)
+                    return {"code": 200, "msg": f"Transferencia completada correctamente. Estado: {transferencia.state}"}
+
+                wizard_model = result.get("res_model")
+                wizard_context = result.get("context", {})
+
+                # Para asistente de backorder
+                if wizard_model == "stock.backorder.confirmation":
+                    wizard_vals = {"pick_ids": [(4, transferencia_id)], "show_transfers": wizard_context.get("default_show_transfers", False)}
+                    wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
+
+                    if crear_backorder:
+                        next_result = wizard.sudo().process()
+                        # Si process() devuelve otro wizard, lo procesamos
+                        if isinstance(next_result, dict) and next_result.get("res_model"):
+                            return procesar_wizard(next_result, transferencia_id, crear_backorder)
+
+                        # Refrescamos el objeto transferencia buscándolo nuevamente
+                        transferencia = request.env["stock.picking"].sudo().search([("id", "=", transferencia_id)], limit=1)
+
+                        # Buscamos si se creó un backorder
+                        backorder = request.env["stock.picking"].sudo().search([("backorder_id", "=", transferencia_id), ("state", "!=", "cancel")], limit=1)
+
+                        return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
+                    else:
+                        next_result = wizard.sudo().process_cancel_backorder()
+                        # Si process_cancel_backorder() devuelve otro wizard, lo procesamos
+                        if isinstance(next_result, dict) and next_result.get("res_model"):
+                            return procesar_wizard(next_result, transferencia_id, crear_backorder)
+                        return {"code": 200, "msg": "Transferencia parcial completada sin crear backorder"}
+
+                # Para asistente de fechas de caducidad
+                elif wizard_model == "expiry.picking.confirmation":
+                    wizard_vals = {"picking_ids": wizard_context.get("default_picking_ids", [[6, 0, [transferencia_id]]]), "lot_ids": wizard_context.get("default_lot_ids", [])}
+
+                    # Ajustamos el contexto con la decisión de backorder
+                    adjusted_context = dict(wizard_context)
+                    if not crear_backorder:
+                        adjusted_context["skip_backorder"] = True
+
+                    wizard = request.env[wizard_model].sudo().with_context(**adjusted_context).create(wizard_vals)
+
+                    # Intentamos procesar usando los diferentes métodos posibles
+                    process_result = None
+                    if hasattr(wizard, "process") and callable(getattr(wizard, "process")):
+                        process_result = wizard.sudo().process()
+                    elif hasattr(wizard, "confirm") and callable(getattr(wizard, "confirm")):
+                        process_result = wizard.sudo().confirm()
+                    elif hasattr(wizard, "action_confirm") and callable(getattr(wizard, "action_confirm")):
+                        process_result = wizard.sudo().action_confirm()
+                    else:
+                        return {"code": 400, "msg": "No se encontró un método para procesar el asistente de fechas de caducidad"}
+
+                    # Si el método de procesamiento devolvió otro wizard, lo procesamos
+                    if isinstance(process_result, dict) and process_result.get("res_model"):
+                        return procesar_wizard(process_result, transferencia_id, crear_backorder)
+
+                    # Verificamos el estado de la transferencia después de confirmar la caducidad
+                    # Refrescamos el objeto transferencia buscándolo nuevamente
+                    transferencia = request.env["stock.picking"].sudo().search([("id", "=", transferencia_id)], limit=1)
+
+                    # Buscamos si se creó un backorder
+                    backorder = False
+                    if crear_backorder:
+                        # Buscamos backorders relacionados con esta transferencia
+                        backorder = request.env["stock.picking"].sudo().search([("backorder_id", "=", transferencia_id), ("state", "!=", "cancel")], limit=1)
+
+                    # Si la transferencia aún no está en estado "done", puede que necesitemos otro asistente
+                    if transferencia.state != "done":
+                        next_result = transferencia.sudo().button_validate()
+                        return procesar_wizard(next_result, transferencia_id, crear_backorder)
+
+                    # Retornamos con información sobre el backorder si fue creado
+                    if crear_backorder and backorder:
+                        return {"code": 200, "msg": "Transferencia procesada con confirmación de fechas de caducidad y backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
+                    else:
+                        return {"code": 200, "msg": "Transferencia procesada con confirmación de fechas de caducidad sin crear backorder", "original_id": transferencia.id, "original_state": transferencia.state}
+
+                # Para asistente de transferencia inmediata
+                elif wizard_model == "stock.immediate.transfer":
+                    wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({"pick_ids": [(4, transferencia_id)]})
+                    next_result = wizard.sudo().process()
+
+                    # Si process() devuelve otro wizard, lo procesamos
+                    if isinstance(next_result, dict) and next_result.get("res_model"):
+                        return procesar_wizard(next_result, transferencia_id, crear_backorder)
+
+                    return {"code": 200, "msg": "Transferencia procesada con transferencia inmediata"}
+
+                else:
+                    return {"code": 400, "msg": f"Se requiere un asistente no soportado: {wizard_model}"}
+
+            # Intentar validar la Transferencia
+            result = transferencia.sudo().button_validate()
+
+            # Utilizamos la función recursiva para manejar todos los wizards en cadena
+            return procesar_wizard(result, id_transferencia, crear_backorder)
 
         except Exception as e:
             # Registrar el error completo para depuración
