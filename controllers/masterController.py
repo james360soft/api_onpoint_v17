@@ -80,6 +80,7 @@ class MasterData(http.Controller):
                 "manual_product_reading": user_permissions.manual_product_reading,
                 "manual_source_location": user_permissions.manual_source_location,
                 "show_owner_field": user_permissions.show_owner_field,
+                "hide_validate_reception": user_permissions.hide_validate_reception,
                 "scan_destination_location_reception": user_permissions.scan_destination_location_reception,
                 "manual_product_selection_transfer": user_permissions.manual_product_selection_transfer,
                 "manual_source_location_transfer": user_permissions.manual_source_location_transfer,
@@ -103,7 +104,7 @@ class MasterData(http.Controller):
     def get_muelles(self):
         try:
             # Obtener todos los muelles con las condiciones especificadas
-            muelles = request.env["stock.location"].sudo().search([("usage", "=", "internal"), ("is_a_dock", "=", True)])
+            muelles = request.env["stock.location"].sudo().search([("usage", "=", "internal"), ("is_a_dock", "=", True), ("is_full", "=", False)])
 
             array_muelles = []
 
@@ -583,6 +584,33 @@ class MasterData(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado {str(err)}"}
+
+    ## POST PARA VACIAR O LLENAR UN MUELLE
+    @http.route("/api/update_dock", auth="user", type="json", methods=["POST"])
+    def post_update_dock(self, **auth):
+        try:
+            dock_id = auth.get("muelle_id", 0)
+            is_full = auth.get("is_full", False)
+
+            # Buscar el muelle
+            dock = request.env["stock.location"].sudo().search([("id", "=", dock_id)], limit=1)
+            if not dock:
+                return {"code": 404, "msg": f"No se encontró el muelle con ID {dock_id}"}
+
+            # Actualizar el estado del muelle
+            dock.sudo().write({"is_full": is_full})
+
+            if is_full:
+                msg = "El muelle se ha llenado correctamente"
+            else:
+                msg = "El muelle se ha vaciado correctamente"
+
+            return {"code": 200, "msg": msg}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
 
 def obtener_almacenes_usuario(user):

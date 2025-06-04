@@ -58,7 +58,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "proveedor": picking.partner_id.name or "",
                         "numero_transferencia": picking.name,
                         "peso_total": 0,
-                        "numero_lineas": 0,
+                        "numero_lineas": len(picking.move_ids),
                         "numero_items": sum(move.product_uom_qty for move in picking.move_ids),
                         "state": picking.state,
                         "origin": picking.origin or "",
@@ -286,6 +286,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "muelle": picking.location_dest_id.display_name or "",
                         "muelle_id": picking.location_dest_id.id or 0,
                         "barcode_muelle": picking.location_dest_id.barcode or "",
+                        "zona_entrega": picking.delivery_zone_id.display_name or "",
                         "lineas_transferencia": [],
                         "lineas_transferencia_enviadas": [],
                     }
@@ -378,6 +379,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 # "time": 0,
                                 # "user_operator_id": 0,
                                 "expire_date": move.lot_id.expiration_date or "",
+                                "is_separate": 0,
                             }
 
                             # if move.lot_id:
@@ -444,6 +446,7 @@ class TransaccionTransferenciasController(http.Controller):
                             # "time": move_line.time or 0,
                             # "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
                             "expire_date": move_line.lot_id.expiration_date or "",
+                            "is_separate": 1,
                         }
 
                         # if move_line.lot_id:
@@ -530,6 +533,7 @@ class TransaccionTransferenciasController(http.Controller):
                         continue
 
                     transferencia_info = {
+                        "batch_id": picking.id,
                         "id": picking.id,
                         "name": picking.name,
                         "fecha_creacion": picking.create_date,
@@ -545,7 +549,11 @@ class TransaccionTransferenciasController(http.Controller):
                         "numero_lineas": 0,
                         "numero_items": sum(move.product_uom_qty for move in picking.move_ids),
                         "state": picking.state,
-                        "origin": picking.origin or "",
+                        "referencia": picking.origin or "",
+                        "contacto": picking.partner_id or 0,
+                        "contacto_name": picking.partner_id.name or "",
+                        "cantidad_productos": len(picking.move_line_ids.filtered(lambda ml: not ml.is_done_item)),
+                        "cantidad_productos_total": len(picking.move_line_ids),
                         "priority": picking.priority,
                         "warehouse_id": warehouse.id,
                         "warehouse_name": warehouse.name,
@@ -557,8 +565,13 @@ class TransaccionTransferenciasController(http.Controller):
                         "backorder_id": picking.backorder_id.id or 0,
                         "backorder_name": picking.backorder_id.name or "",
                         "show_check_availability": picking.show_check_availability,
-                        "lineas_transferencia": [],
-                        "lineas_transferencia_enviadas": [],
+                        "order_tms": picking.order_tms if hasattr(picking, "order_tms") else "",
+                        "zona_entrega_tms": picking.delivery_zone_tms if hasattr(picking, "delivery_zone_tms") else "",
+                        "zona_entrega": picking.delivery_zone_id.display_name or "",
+                        "numero_paquetes": len(picking.move_line_ids.mapped("result_package_id")),
+                        "lista_productos": [],
+                        "lista_productos_enviadas": [],
+                        "lista_paquetes": [],
                     }
 
                     for move in movimientos_operaciones:
@@ -623,7 +636,7 @@ class TransaccionTransferenciasController(http.Controller):
                                     }
                                 )
 
-                            transferencia_info["lineas_transferencia"].append(linea_info)
+                            transferencia_info["lista_productos"].append(linea_info)
 
                     for move_line in movimientos_enviados:
                         if not move_line.is_done_item:
@@ -684,9 +697,60 @@ class TransaccionTransferenciasController(http.Controller):
                                 }
                             )
 
-                        transferencia_info["lineas_transferencia_enviadas"].append(linea_info)
+                        transferencia_info["lista_productos_enviadas"].append(linea_info)
 
-                    transferencia_info["numero_lineas"] = len(transferencia_info["lineas_transferencia"])
+                    # Obtener los paquetes de la transferencia
+                    move_lines_in_picking = picking.move_line_ids.filtered(lambda ml: ml.package_id or ml.result_package_id)
+                    unique_packages = move_lines_in_picking.mapped("package_id") + move_lines_in_picking.mapped("result_package_id")
+
+                    for pack in unique_packages:
+                        move_lines_in_package = move_lines_in_picking.filtered(lambda ml: (ml.package_id == pack or ml.result_package_id == pack) and ml.is_done_item_pack)
+
+                        cantidad_productos = len(move_lines_in_package)
+
+                        package = {
+                            "name": pack.name,
+                            "id": pack.id,
+                            "batch_id": picking.id,  # Usaré picking.id en lugar de batch.id ya que no veo una variable batch definida
+                            "pedido_id": picking.id,
+                            "cantidad_productos": cantidad_productos,
+                            "lista_productos_in_packing": [],
+                            "is_sticker": pack.is_sticker,
+                            "is_certificate": pack.is_certificate,
+                            "fecha_creacion": pack.create_date.strftime("%Y-%m-%d") if pack.create_date else "",
+                            "fecha_actualizacion": pack.write_date.strftime("%Y-%m-%d") if pack.write_date else "",
+                        }
+                        transferencia_info["lista_paquetes"].append(package)  # Cambié pedido a transferencia_info para que coincida con tu estructura
+
+                        for move_line in move_lines_in_package:
+                            product = move_line.product_id
+                            lot = move_line.lot_id
+
+                            product_in_packing = {
+                                "id_move": move_line.id,
+                                "pedido_id": picking.id,
+                                "batch_id": picking.id,  # Usaré picking.id en lugar de batch.id
+                                "package_name": pack.name,
+                                "quantity_separate": move_line.quantity,
+                                "id_product": product.id if product else 0,
+                                "product_id": [product.id, product.name],
+                                "name_packing": pack.name,
+                                "cantidad_enviada": move_line.quantity,
+                                "unidades": product.uom_id.name if product.uom_id else "UND",
+                                "peso": product.weight if product else 0,
+                                "lote_id": [lot.id, lot.name if lot else ""] if lot else [],
+                                "observacion": move_line.new_observation_packing,
+                                "weight": product.weight if product else 0,
+                                "is_sticker": pack.is_sticker,
+                                "is_certificate": pack.is_certificate,
+                                "id_package": pack.id,
+                                "quantity": move_line.quantity,
+                                "tracking": product.tracking if product else "",
+                            }
+
+                            package["lista_productos_in_packing"].append(product_in_packing)
+
+                    transferencia_info["numero_lineas"] = len(transferencia_info["lista_productos"])
                     # transferencia_info["numero_items"] = sum(l["quantity_to_transfer"] for l in transferencia_info["lineas_transferencia"])
 
                     array_transferencias.append(transferencia_info)
@@ -1447,6 +1511,80 @@ class TransaccionTransferenciasController(http.Controller):
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
     ## POST Completar transferencia
+    # @http.route("/api/complete_transfer", auth="user", type="json", methods=["POST"], csrf=False)
+    # def completar_transferencia(self, **auth):
+    #     try:
+    #         user = request.env.user
+    #         # ✅ Validar usuario
+    #         if not user:
+    #             return {"code": 400, "msg": "Usuario no encontrado"}
+
+    #         id_transferencia = auth.get("id_transferencia", 0)
+    #         crear_backorder = auth.get("crear_backorder", True)
+
+    #         transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)], limit=1)
+
+    #         if not transferencia:
+    #             return {"code": 400, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
+
+    #         # Eliminar las lineas que no se tiene is_done_item true
+    #         lineas_no_enviadas = transferencia.move_line_ids.filtered(lambda l: not l.is_done_item)
+    #         if lineas_no_enviadas:
+    #             lineas_no_enviadas.unlink()
+
+    #         # Intentar validar la Transferencia
+    #         result = transferencia.sudo().button_validate()
+
+    #         # Si el resultado es un diccionario, significa que se requiere acción adicional (un wizard)
+    #         if isinstance(result, dict) and result.get("res_model"):
+    #             wizard_model = result.get("res_model")
+
+    #             # Para asistente de backorder
+    #             if wizard_model == "stock.backorder.confirmation":
+    #                 # Crear el wizard con los valores del contexto
+    #                 wizard_context = result.get("context", {})
+
+    #                 # Crear el asistente con los valores correctos según tu JSON
+    #                 # En Odoo 17, la forma de enlazar registros sigue siendo la misma
+    #                 wizard_vals = {"pick_ids": [(4, id_transferencia)], "show_transfers": wizard_context.get("default_show_transfers", False)}
+
+    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
+
+    #                 # Procesar según la opción de crear_backorder
+    #                 if crear_backorder:
+    #                     # En Odoo 17, el método process sigue existiendo
+    #                     data = wizard.sudo().process()
+    #                     if data.get("res_model"):
+    #                         return {"code": 400, "msg": data.get("res_model")}
+
+    #                     return {"code": 200, "msg": f"Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": wizard.id if wizard else False}
+    #                     # return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
+    #                 else:
+    #                     # En Odoo 17, el método process_cancel_backorder sigue existiendo
+    #                     data = wizard.sudo().process_cancel_backorder()
+    #                     if data.get("res_model"):
+    #                         return {"code": 400, "msg": data.get("res_model")}
+
+    #                     return {"code": 200, "msg": "Transferencia parcial completada sin crear backorder"}
+
+    #             # Para asistente de transferencia inmediata
+    #             elif wizard_model == "stock.immediate.transfer":
+    #                 wizard_context = result.get("context", {})
+    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({"pick_ids": [(4, id_transferencia)]})
+
+    #                 wizard.sudo().process()
+    #                 return {"code": 200, "msg": "Transferencia procesada con transferencia inmediata"}
+
+    #             else:
+    #                 return {"code": 400, "msg": f"Se requiere un asistente no soportado: {wizard_model}"}
+
+    #         # Si llegamos aquí, button_validate completó la validación sin necesidad de asistentes
+    #         return {"code": 200, "msg": "Transferencia completada correctamente"}
+
+    #     except Exception as e:
+    #         # Registrar el error completo para depuración
+    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
     @http.route("/api/complete_transfer", auth="user", type="json", methods=["POST"], csrf=False)
     def completar_transferencia(self, **auth):
         try:
@@ -1471,8 +1609,13 @@ class TransaccionTransferenciasController(http.Controller):
             # Intentar validar la Transferencia
             result = transferencia.sudo().button_validate()
 
+            # Verificar si result es un booleano (True) o un diccionario
+            if isinstance(result, bool):
+                # Si es True, la validación se completó sin necesidad de asistentes
+                return {"code": 200, "msg": "Transferencia completada correctamente"}
+
             # Si el resultado es un diccionario, significa que se requiere acción adicional (un wizard)
-            if isinstance(result, dict) and result.get("res_model"):
+            elif isinstance(result, dict) and result.get("res_model"):
                 wizard_model = result.get("res_model")
 
                 # Para asistente de backorder
@@ -1481,7 +1624,6 @@ class TransaccionTransferenciasController(http.Controller):
                     wizard_context = result.get("context", {})
 
                     # Crear el asistente con los valores correctos según tu JSON
-                    # En Odoo 17, la forma de enlazar registros sigue siendo la misma
                     wizard_vals = {"pick_ids": [(4, id_transferencia)], "show_transfers": wizard_context.get("default_show_transfers", False)}
 
                     wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
@@ -1489,17 +1631,16 @@ class TransaccionTransferenciasController(http.Controller):
                     # Procesar según la opción de crear_backorder
                     if crear_backorder:
                         # En Odoo 17, el método process sigue existiendo
-                        data = wizard.sudo().process()
-                        if data.get("res_model"):
-                            return {"code": 400, "msg": data.get("res_model")}
+                        wizard_result = wizard.sudo().process()
+                        if isinstance(wizard_result, dict) and wizard_result.get("res_model"):
+                            return {"code": 400, "msg": wizard_result.get("res_model")}
 
-                        return {"code": 200, "msg": f"Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": wizard.id if wizard else False}
-                        # return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
+                        return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": wizard.id if wizard else False}
                     else:
                         # En Odoo 17, el método process_cancel_backorder sigue existiendo
-                        data = wizard.sudo().process_cancel_backorder()
-                        if data.get("res_model"):
-                            return {"code": 400, "msg": data.get("res_model")}
+                        wizard_result = wizard.sudo().process_cancel_backorder()
+                        if isinstance(wizard_result, dict) and wizard_result.get("res_model"):
+                            return {"code": 400, "msg": wizard_result.get("res_model")}
 
                         return {"code": 200, "msg": "Transferencia parcial completada sin crear backorder"}
 
@@ -1514,8 +1655,8 @@ class TransaccionTransferenciasController(http.Controller):
                 else:
                     return {"code": 400, "msg": f"Se requiere un asistente no soportado: {wizard_model}"}
 
-            # Si llegamos aquí, button_validate completó la validación sin necesidad de asistentes
-            return {"code": 200, "msg": "Transferencia completada correctamente"}
+            # En caso de que result no sea ni bool ni dict o sea dict sin 'res_model'
+            return {"code": 200, "msg": "Transferencia completada"}
 
         except Exception as e:
             # Registrar el error completo para depuración

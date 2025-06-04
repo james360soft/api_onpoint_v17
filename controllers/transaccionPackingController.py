@@ -4,6 +4,7 @@ from odoo.http import request
 from odoo.exceptions import AccessError, ValidationError
 from datetime import datetime, timedelta
 import pytz
+import base64
 
 
 class TransaccionDataPacking(http.Controller):
@@ -17,6 +18,8 @@ class TransaccionDataPacking(http.Controller):
                 return {"code": 401, "msg": "Usuario no autenticado"}
 
             array_batch = []
+
+            base_url = request.httprequest.host_url.rstrip("/")
 
             # # ✅ Verificar si el usuario tiene almacenes permitidos
             # allowed_warehouses = user.allowed_warehouse_ids
@@ -189,6 +192,9 @@ class TransaccionDataPacking(http.Controller):
                                         "unidades": product.uom_id.name if product.uom_id else "UND",
                                         # "rimoval_priority": location.priority_picking,
                                         "rimoval_priority": location.priority_picking_desplay if location else 0,
+                                        "maneja_temperatura": product.temperature_control if hasattr(product, "temperature_control") else False,
+                                        "temperatura": move_line.temperature if hasattr(move_line, "temperature") else 0,
+                                        # "imagen": move_line.imagen if (hasattr(move_line, "imagen") and move_line.imagen) else "",
                                     }
 
                                     pedido["lista_productos"].append(productos)
@@ -201,6 +207,19 @@ class TransaccionDataPacking(http.Controller):
                                 move_lines_in_package = move_lines_in_picking.filtered(lambda ml: (ml.package_id == pack or ml.result_package_id == pack) and ml.is_done_item_pack)
 
                                 cantidad_productos = len(move_lines_in_package)
+
+                                line_with_image = move_lines_in_package.filtered(lambda ml: getattr(ml, "imagen", False))[:1]
+                                line_with_observation = move_lines_in_package.filtered(lambda ml: getattr(ml, "imagen_observation", False))[:1]
+
+                                # Generar URLs de imágenes solo si existen líneas con imágenes
+                                image_url = ""
+                                image_novedad_url = ""
+
+                                if line_with_image:
+                                    image_url = f"{base_url}/api/view_imagen_linea_recepcion/{line_with_image.id}"
+
+                                if line_with_observation:
+                                    image_novedad_url = f"{base_url}/api/view_imagen_observation/{line_with_observation.id}"
 
                                 package = {
                                     "name": pack.name,
@@ -240,6 +259,8 @@ class TransaccionDataPacking(http.Controller):
                                         "id_package": pack.id,
                                         "quantity": move_line.quantity,
                                         "tracking": product.tracking if product else "",
+                                        "image": f"{base_url}/api/view_imagen_linea_recepcion/{move_line.id}" if getattr(move_line, "imagen", False) else "",
+                                        "image_novedad": f"{base_url}/api/view_imagen_observation/{move_line.id}" if getattr(move_line, "imagen_observation", False) else "",
                                     }
 
                                     package["lista_productos_in_packing"].append(product_in_packing)
@@ -466,6 +487,451 @@ class TransaccionDataPacking(http.Controller):
 
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
+    ##POST Para enviar la temperatura y la imagen en la linea de movimiento
+    # @http.route("/api/send_image_linea_recepcion/batch", auth="user", type="http", methods=["POST"], csrf=False)
+    # def send_image_linea_recepcion_batch(self, **post):
+    #     try:
+    #         user = request.env.user
+    #         if not user:
+    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+    #         id_linea_recepcion = post.get("move_line_id")
+    #         image_file = request.httprequest.files.get("image_data")
+    #         temperatura = post.get("temperatura", 0.0)
+
+    #         # Validar ID de línea de recepción
+    #         if not id_linea_recepcion:
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+    #         # Validar archivo de imagen
+    #         if not image_file:
+    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+    #         # Convertir ID a entero si viene como string
+    #         try:
+    #             id_linea_recepcion = int(id_linea_recepcion)
+    #         except (ValueError, TypeError):
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+    #         # Buscar la línea de recepción por ID
+    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+    #         if not linea_recepcion:
+    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+    #         # Validar tipo de archivo (opcional)
+    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
+    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+    #         if file_extension not in allowed_extensions:
+    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
+
+    #         # Leer el contenido del archivo y codificarlo a base64
+    #         image_data_bytes = image_file.read()
+    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+    #         # Guardar la imagen codificada en base64
+    #         linea_recepcion.sudo().write({"imagen": image_data_base64, "temperature": temperatura})
+
+    #         return request.make_json_response({"code": 200, "result": "Imagen y temperatura guardadas correctamente en la linea del batch", "line_id": id_linea_recepcion})
+
+    #     except Exception as e:
+    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
+
+    # @http.route("/api/send_imagen_observation/batch", auth="user", type="http", methods=["POST"], csrf=False)
+    # def send_imagen_observation_batch(self, **post):
+    #     try:
+    #         user = request.env.user
+    #         if not user:
+    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+    #         id_linea_recepcion = post.get("move_line_id")
+    #         image_file = request.httprequest.files.get("image_data")
+
+    #         # Validar ID de línea de recepción
+    #         if not id_linea_recepcion:
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+    #         # Validar archivo de imagen
+    #         if not image_file:
+    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+    #         # Convertir ID a entero si viene como string
+    #         try:
+    #             id_linea_recepcion = int(id_linea_recepcion)
+    #         except (ValueError, TypeError):
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+    #         # Buscar la línea de recepción por ID
+    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+    #         if not linea_recepcion:
+    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+    #         # Validar tipo de archivo (opcional)
+    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
+    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+    #         if file_extension not in allowed_extensions:
+    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
+
+    #         # Leer el contenido del archivo y codificarlo a base64
+    #         image_data_bytes = image_file.read()
+    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+    #         # Guardar la imagen codificada en base64 y la observación
+    #         linea_recepcion.sudo().write({"imagen_observation": image_data_base64})
+
+    #         # 🔥 Generar la URL para ver la imagen
+    #         base_url = request.httprequest.host_url.rstrip("/")
+    #         image_url = f"{base_url}/api/view_imagen_observation/{id_linea_recepcion}"
+
+    #         # return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": id_linea_recepcion, "image_url": image_url})  # 🔥 URL para ver la imagen
+    #         return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": id_linea_recepcion})
+
+    #     except Exception as e:
+    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
+
+    # ==========================================
+    # ENDPOINTS BATCH MEJORADOS
+    # ==========================================
+
+    @http.route("/api/send_image_linea_recepcion/batch", auth="user", type="http", methods=["POST"], csrf=False)
+    def send_image_linea_recepcion_batch(self, **post):
+        try:
+            user = request.env.user
+            if not user:
+                return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+            id_linea_recepcion = post.get("move_line_id")
+            image_file = request.httprequest.files.get("image_data")
+            temperatura = post.get("temperatura", 0.0)
+
+            # Validar ID de línea de recepción
+            if not id_linea_recepcion:
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+            # Validar archivo de imagen
+            if not image_file:
+                return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+            # Convertir ID a entero si viene como string
+            try:
+                id_linea_recepcion = int(id_linea_recepcion)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+            # Validar tipo de archivo
+            allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+            if file_extension not in allowed_extensions:
+                return request.make_json_response({"code": 400, "msg": f"Formato de imagen no permitido. Formatos válidos: {', '.join(allowed_extensions)}"})
+
+            # Validar tamaño del archivo (máximo 5MB)
+            max_size = 5 * 1024 * 1024
+            image_file.seek(0, 2)
+            file_size = image_file.tell()
+            image_file.seek(0)
+
+            if file_size > max_size:
+                return request.make_json_response({"code": 400, "msg": "El archivo es demasiado grande. Tamaño máximo: 5MB"})
+
+            # Validar temperatura
+            try:
+                temperatura = float(temperatura)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "Temperatura debe ser un número"})
+
+            # Leer el contenido del archivo y codificarlo a base64
+            image_data_bytes = image_file.read()
+            image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+            # Guardar la imagen codificada en base64
+            linea_recepcion.sudo().write({"imagen": image_data_base64, "temperature": temperatura})
+
+            # Generar URLs para ver la imagen
+            base_url = request.httprequest.host_url.rstrip("/")
+            image_url = f"{base_url}/api/view_imagen_linea_recepcion/batch/{id_linea_recepcion}"
+            json_url = f"{base_url}/api/get_imagen_linea_recepcion/batch/{id_linea_recepcion}"
+
+            return request.make_json_response(
+                {
+                    "code": 200,
+                    "result": "Imagen y temperatura guardadas correctamente en la línea del batch",
+                    "line_id": id_linea_recepcion,
+                    "temperature": temperatura,
+                    "filename": image_file.filename,
+                    "image_size": len(image_data_bytes),
+                    "image_url": image_url,
+                    "json_url": json_url,
+                    "batch_type": "image_recepcion",
+                }
+            )
+
+        except Exception as e:
+            return request.make_json_response({"code": 500, "msg": "Error interno del servidor"})
+
+    @http.route("/api/send_imagen_observation/batch", auth="user", type="http", methods=["POST"], csrf=False)
+    def send_imagen_observation_batch(self, **post):
+        try:
+            user = request.env.user
+            if not user:
+                return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+            id_linea_recepcion = post.get("move_line_id")
+            image_file = request.httprequest.files.get("image_data")
+
+            # Validar ID de línea de recepción
+            if not id_linea_recepcion:
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+            # Validar archivo de imagen
+            if not image_file:
+                return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+            # Convertir ID a entero si viene como string
+            try:
+                id_linea_recepcion = int(id_linea_recepcion)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+            # Validar tipo de archivo
+            allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+            if file_extension not in allowed_extensions:
+                return request.make_json_response({"code": 400, "msg": f"Formato de imagen no permitido. Formatos válidos: {', '.join(allowed_extensions)}"})
+
+            # Validar tamaño del archivo (máximo 5MB)
+            max_size = 5 * 1024 * 1024
+            image_file.seek(0, 2)
+            file_size = image_file.tell()
+            image_file.seek(0)
+
+            if file_size > max_size:
+                return request.make_json_response({"code": 400, "msg": "El archivo es demasiado grande. Tamaño máximo: 5MB"})
+
+            # Leer el contenido del archivo y codificarlo a base64
+            image_data_bytes = image_file.read()
+            image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+            # Guardar la imagen codificada en base64 y la observación
+            linea_recepcion.sudo().write({"imagen_observation": image_data_base64})
+
+            # Generar URLs para ver la imagen
+            base_url = request.httprequest.host_url.rstrip("/")
+            image_url = f"{base_url}/api/view_imagen_observation/batch/{id_linea_recepcion}"
+            json_url = f"{base_url}/api/get_imagen_observation/batch/{id_linea_recepcion}"
+
+            return request.make_json_response(
+                {"code": 200, "result": "Imagen de observación guardada correctamente en batch", "line_id": id_linea_recepcion, "filename": image_file.filename, "image_size": len(image_data_bytes), "image_url": image_url, "json_url": json_url, "batch_type": "observation"}
+            )
+
+        except Exception as e:
+            return request.make_json_response({"code": 500, "msg": "Error interno del servidor"})
+
+    # ==========================================
+    # ENDPOINTS PARA VISUALIZAR IMÁGENES BATCH
+    # ==========================================
+
+    @http.route("/api/view_imagen_linea_recepcion/batch/<int:line_id>", auth="user", type="http", methods=["GET"], csrf=False)
+    def view_imagen_linea_recepcion_batch(self, line_id, **kw):
+        """
+        Endpoint para visualizar la imagen de una línea de recepción batch (campo 'imagen')
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_response("Línea de recepción batch no encontrada", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen:
+                return request.make_response("No hay imagen disponible para esta línea batch", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Decodificar la imagen de base64
+            try:
+                image_data = base64.b64decode(linea_recepcion.imagen)
+            except Exception as e:
+                return request.make_response("Error al procesar la imagen batch", status=500, headers=[("Content-Type", "text/plain")])
+
+            # Detectar el tipo de contenido de la imagen
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            # Crear la respuesta con la imagen
+            response = request.make_response(image_data, headers=[("Content-Type", content_type), ("Content-Length", str(len(image_data))), ("Cache-Control", "public, max-age=3600"), ("Content-Disposition", f"inline; filename=batch_recepcion_{line_id}.jpg")])
+
+            return response
+
+        except Exception as e:
+            return request.make_response("Error interno del servidor", status=500, headers=[("Content-Type", "text/plain")])
+
+    @http.route("/api/view_imagen_observation/batch/<int:line_id>", auth="user", type="http", methods=["GET"], csrf=False)
+    def view_imagen_observation_batch(self, line_id, **kw):
+        """
+        Endpoint para visualizar la imagen de observación batch (campo 'imagen_observation')
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_response("Línea de recepción batch no encontrada", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Verificar si tiene imagen de observación
+            if not linea_recepcion.imagen_observation:
+                return request.make_response("No hay imagen de observación disponible para esta línea batch", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Decodificar la imagen de base64
+            try:
+                image_data = base64.b64decode(linea_recepcion.imagen_observation)
+            except Exception as e:
+                return request.make_response("Error al procesar la imagen de observación batch", status=500, headers=[("Content-Type", "text/plain")])
+
+            # Detectar el tipo de contenido de la imagen
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            # Crear la respuesta con la imagen
+            response = request.make_response(image_data, headers=[("Content-Type", content_type), ("Content-Length", str(len(image_data))), ("Cache-Control", "public, max-age=3600"), ("Content-Disposition", f"inline; filename=batch_observation_{line_id}.jpg")])
+
+            return response
+
+        except Exception as e:
+            return request.make_response("Error interno del servidor", status=500, headers=[("Content-Type", "text/plain")])
+
+    @http.route("/api/get_imagen_linea_recepcion/batch/<int:line_id>", auth="user", type="json", methods=["GET"], csrf=False)
+    def get_imagen_linea_recepcion_batch_json(self, line_id, **kw):
+        """
+        Endpoint que devuelve la imagen de línea de recepción batch en formato JSON
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción batch no encontrada"}
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen:
+                return {"code": 404, "msg": "No hay imagen disponible para esta línea batch"}
+
+            # Detectar tipo de imagen
+            image_data = base64.b64decode(linea_recepcion.imagen)
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            return {
+                "code": 200,
+                "result": {
+                    "line_id": line_id,
+                    "image_base64": linea_recepcion.imagen,
+                    "content_type": content_type,
+                    "size": len(image_data),
+                    "temperature": linea_recepcion.temperature if hasattr(linea_recepcion, "temperature") else None,
+                    "move_id": linea_recepcion.move_id.id if linea_recepcion.move_id else None,
+                    "product_name": linea_recepcion.product_id.name if linea_recepcion.product_id else None,
+                    "product_code": linea_recepcion.product_id.default_code if linea_recepcion.product_id else None,
+                    "qty_done": linea_recepcion.qty_done,
+                    "location_dest": linea_recepcion.location_dest_id.name if linea_recepcion.location_dest_id else None,
+                    "batch_type": "image_recepcion",
+                },
+            }
+
+        except Exception as e:
+            return {"code": 500, "msg": "Error interno del servidor"}
+
+    @http.route("/api/get_imagen_observation/batch/<int:line_id>", auth="user", type="json", methods=["GET"], csrf=False)
+    def get_imagen_observation_batch_json(self, line_id, **kw):
+        """
+        Endpoint que devuelve la imagen de observación batch en formato JSON
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción batch no encontrada"}
+
+            # Verificar si tiene imagen de observación
+            if not linea_recepcion.imagen_observation:
+                return {"code": 404, "msg": "No hay imagen de observación disponible para esta línea batch"}
+
+            # Detectar tipo de imagen
+            image_data = base64.b64decode(linea_recepcion.imagen_observation)
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            return {
+                "code": 200,
+                "result": {
+                    "line_id": line_id,
+                    "image_base64": linea_recepcion.imagen_observation,
+                    "content_type": content_type,
+                    "size": len(image_data),
+                    "move_id": linea_recepcion.move_id.id if linea_recepcion.move_id else None,
+                    "product_name": linea_recepcion.product_id.name if linea_recepcion.product_id else None,
+                    "product_code": linea_recepcion.product_id.default_code if linea_recepcion.product_id else None,
+                    "qty_done": linea_recepcion.qty_done,
+                    "location_dest": linea_recepcion.location_dest_id.name if linea_recepcion.location_dest_id else None,
+                    "batch_type": "observation",
+                },
+            }
+
+        except Exception as e:
+            return {"code": 500, "msg": "Error interno del servidor"}
 
     ### POST Transacciones para desempacar paquete en packing
     @http.route("/api/unpacking", auth="user", type="json", methods=["POST"])

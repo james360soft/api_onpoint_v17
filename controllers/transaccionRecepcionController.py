@@ -5,10 +5,15 @@ from odoo.exceptions import AccessError
 from datetime import datetime, timedelta
 import pytz
 from datetime import date
+import base64
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class TransaccionRecepcionController(http.Controller):
 
+    # GET OBTENER LAS RECEPCIONES PENDIENTES
     @http.route("/api/recepciones", auth="user", type="json", methods=["GET"])
     def get_recepciones(self):
         try:
@@ -19,6 +24,370 @@ class TransaccionRecepcionController(http.Controller):
                 return {"code": 400, "msg": "Usuario no encontrado"}
 
             array_recepciones = []
+
+            base_url = request.httprequest.host_url.rstrip("/")
+
+            # Obtener almacenes del usuario
+            allowed_warehouses = obtener_almacenes_usuario(user)
+
+            # Verificar si es un error (diccionario con código y mensaje)
+            if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
+                return allowed_warehouses  # Devolver el error directamente
+
+            # Obtener la configuración actual
+            config = request.env["res.config.settings"].sudo().create({})
+            consigna_habilitada = config.group_stock_tracking_owner
+
+            # ✅ Obtener recepciones pendientes directamente de los almacenes permitidos
+            for warehouse in allowed_warehouses:
+                # Buscar todas las recepciones pendientes (no completadas ni canceladas) para este almacén
+                recepciones_pendientes = (
+                    request.env["stock.picking"]
+                    .sudo()
+                    .search(
+                        [
+                            ("state", "in", ["assigned", "confirmed"]),
+                            ("picking_type_code", "=", "incoming"),
+                            ("picking_type_id.warehouse_id", "=", warehouse.id),
+                            ("picking_type_id.sequence_code", "in", ["IN"]),
+                            # ("is_return_picking", "=", False),
+                            # ("user_id", "in", [user.id, False]),  # Asignadas al usuario o sin asignar
+                            ("responsable_id", "in", [user.id, False]),  # Asignadas al usuario o sin asignar
+                        ]
+                    )
+                )
+
+                for picking in recepciones_pendientes:
+                    # Verificar si hay movimientos pendientes
+                    # En Odoo 17, move_lines se cambió a move_ids o move_ids_without_package
+                    # movimientos_pendientes = picking.move_ids.filtered(lambda m: m.state in ["confirmed", "assigned"])
+                    movimientos_pendientes = picking.move_ids
+
+                    # Si no hay movimientos pendientes, omitir esta recepción
+                    if not movimientos_pendientes:
+                        continue
+
+                    # Obtener la orden de compra relacionada (si existe)
+                    purchase_order = picking.purchase_id or (picking.origin and request.env["purchase.order"].sudo().search([("name", "=", picking.origin)], limit=1))
+
+                    # Calcular peso total - cambiando product_qty por product_uom_qty
+                    peso_total = sum(move.product_id.weight * move.product_uom_qty for move in movimientos_pendientes if move.product_id.weight)
+
+                    # Calcular número de ítems (suma total de cantidades)
+                    numero_items = sum(move.product_uom_qty for move in movimientos_pendientes)
+
+                    manejo_temperatura = False
+
+                    productos_con_temperatura = picking.move_ids.mapped("product_id").filtered(lambda p: hasattr(p, "temperature_control") and p.temperature_control)
+                    if productos_con_temperatura:
+                        manejo_temperatura = True
+
+                    # Obtener el ID del propietario
+                    owner_id = picking.owner_id.id if hasattr(picking, "owner_id") and picking.owner_id else 0
+
+                    # Obtener el nombre del propietario (si existe el ID)
+                    propietario_nombre = ""
+                    if owner_id:
+                        partner = request.env["res.partner"].sudo().browse(owner_id)
+                        propietario_nombre = partner.name if partner else ""
+
+                    recepcion_info = {
+                        "id": picking.id,
+                        "name": picking.name,  # Nombre de la recepción
+                        "fecha_creacion": picking.create_date,  # Fecha con hora
+                        "proveedor_id": picking.partner_id.id or 0,
+                        "proveedor": picking.partner_id.name or "",
+                        "location_dest_id": picking.location_dest_id.id or "",
+                        "location_dest_name": picking.location_dest_id.display_name or "",
+                        "purchase_order_id": purchase_order.id if purchase_order else 0,
+                        "purchase_order_name": purchase_order.name if purchase_order else "",  # Orden de compra
+                        "numero_entrada": picking.name or "",  # Número de entrada
+                        "peso_total": peso_total,  # Peso total
+                        "numero_lineas": len(picking.move_ids),  # Número de líneas (productos)
+                        "numero_items": numero_items,  # Número de ítems (cantidades)
+                        "state": picking.state,
+                        "origin": picking.origin or "",
+                        "priority": picking.priority,
+                        "warehouse_id": warehouse.id,
+                        "warehouse_name": warehouse.name,
+                        "location_id": picking.location_id.id,
+                        "location_name": picking.location_id.display_name,
+                        "responsable_id": picking.responsable_id.id if picking.responsable_id else 0,
+                        "responsable": picking.responsable_id.name if picking.responsable_id else "",
+                        "picking_type": picking.picking_type_id.name,
+                        "backorder_id": picking.backorder_id.id if picking.backorder_id else 0,
+                        "backorder_name": picking.backorder_id.name if picking.backorder_id else "",  # Nombre del backorder
+                        # Verificar si los campos personalizados existen
+                        "start_time_reception": picking.start_time_reception or "",
+                        "end_time_reception": picking.end_time_reception or "",
+                        "picking_type_code": picking.picking_type_code,
+                        "show_check_availability": picking.show_check_availability if hasattr(picking, "show_check_availability") else False,
+                        "maneja_temperatura": manejo_temperatura,
+                        "temperatura": picking.temperature if hasattr(picking, "temperature") else 0,
+                        "manejo_propetario": consigna_habilitada,
+                        "propetario": propietario_nombre,
+                        "lineas_recepcion": [],
+                        "lineas_recepcion_enviadas": [],
+                    }
+
+                    # ✅ Procesar solo las líneas pendientes
+                    for move in movimientos_pendientes:
+                        product = move.product_id
+                        purchase_line = move.purchase_line_id
+
+                        cantidad_faltante = move.product_uom_qty - sum(l.quantity for l in move.move_line_ids if l.is_done_item)
+
+                        maneja_temperatura = product.temperature_control if hasattr(product, "temperature_control") else False
+                        temperatura = move.temperature if hasattr(move, "temperature") else 0
+                        imagen = move.imagen if hasattr(move, "imagen") else ""
+
+                        # Obtener cantidad ordenada
+                        quantity_ordered = 0
+                        if purchase_line and purchase_line.product_uom_qty:
+                            quantity_ordered = purchase_line.product_uom_qty
+                        else:
+                            quantity_ordered = move.product_uom_qty
+
+                        # En Odoo 17, quantity_done ya no existe, se usa quantity
+                        quantity_done = move.quantity
+
+                        # # ⚠️ Saltar líneas totalmente recepcionadas
+                        # if quantity_done < quantity_ordered:
+
+                        if not move.picked:
+                            # Obtener códigos de barras adicionales
+                            array_barcodes = []
+                            if hasattr(product, "barcode_ids"):
+                                array_barcodes = [
+                                    {
+                                        "barcode": barcode.name,
+                                        "id_move": move.id,
+                                        "id_product": product.id,
+                                        "batch_id": picking.id,
+                                    }
+                                    for barcode in product.barcode_ids
+                                    if barcode.name
+                                ]
+
+                            # Obtener empaques del producto
+                            array_packing = []
+                            if hasattr(product, "packaging_ids"):
+                                array_packing = [
+                                    {
+                                        "barcode": pack.barcode,
+                                        "cantidad": pack.qty,
+                                        "id_move": move.id,
+                                        "id_product": product.id,
+                                        "batch_id": picking.id,
+                                    }
+                                    for pack in product.packaging_ids
+                                    if pack.barcode
+                                ]
+
+                            # obtener la fecha de vencimiento del producto pero la que esta mas cerca a vencer
+                            fecha_vencimiento = ""
+                            if product.tracking == "lot":
+                                lot = request.env["stock.lot"].search([("product_id", "=", product.id)], order="expiration_date asc", limit=1)
+                                if lot and hasattr(lot, "expiration_date"):
+                                    fecha_vencimiento = lot.expiration_date
+
+                            # Generar información de la línea de recepción
+                            linea_info = {
+                                "id": move.id,
+                                "id_move": move.id,
+                                "id_recepcion": picking.id,
+                                "state": move.state,
+                                "product_id": product.id,
+                                "product_name": product.name,
+                                "product_code": product.default_code or "",
+                                "product_barcode": product.barcode or "",
+                                "product_tracking": product.tracking or "",
+                                "fecha_vencimiento": fecha_vencimiento or "",
+                                "dias_vencimiento": product.expiration_time if hasattr(product, "expiration_time") else "",
+                                "other_barcodes": array_barcodes,
+                                "product_packing": array_packing,
+                                "quantity_ordered": purchase_line.product_uom_qty if purchase_line else move.product_uom_qty,
+                                "quantity_to_receive": move.product_uom_qty,
+                                # "quantity_done": move.quantity,
+                                "uom": move.product_uom.name if move.product_uom else "UND",
+                                "location_dest_id": move.location_dest_id.id or 0,
+                                "location_dest_name": move.location_dest_id.display_name or "",
+                                "location_dest_barcode": move.location_dest_id.barcode or "",
+                                "location_id": move.location_id.id or 0,
+                                "location_name": move.location_id.display_name or "",
+                                "location_barcode": move.location_id.barcode or "",
+                                "weight": product.weight or 0,
+                                "cantidad_faltante": cantidad_faltante,
+                                "maneja_temperatura": maneja_temperatura,
+                                "temperatura": temperatura,
+                                # "imagen": imagen,
+                            }
+
+                            recepcion_info["lineas_recepcion"].append(linea_info)
+
+                        elif cantidad_faltante > 0:
+                            # Obtener códigos de barras adicionales
+                            array_barcodes = []
+                            if hasattr(product, "barcode_ids"):
+                                array_barcodes = [
+                                    {
+                                        "barcode": barcode.name,
+                                        "id_move": move.id,
+                                        "id_product": product.id,
+                                        "batch_id": picking.id,
+                                    }
+                                    for barcode in product.barcode_ids
+                                    if barcode.name
+                                ]
+
+                            # Obtener empaques del producto
+                            array_packing = []
+                            if hasattr(product, "packaging_ids"):
+                                array_packing = [
+                                    {
+                                        "barcode": pack.barcode,
+                                        "cantidad": pack.qty,
+                                        "id_move": move.id,
+                                        "id_product": product.id,
+                                        "batch_id": picking.id,
+                                    }
+                                    for pack in product.packaging_ids
+                                    if pack.barcode
+                                ]
+
+                            # obtener la fecha de vencimiento del producto pero la que esta mas cerca a vencer
+                            fecha_vencimiento = ""
+                            if product.tracking == "lot":
+                                lot = request.env["stock.lot"].search([("product_id", "=", product.id)], order="expiration_date asc", limit=1)
+                                if lot and hasattr(lot, "expiration_date"):
+                                    fecha_vencimiento = lot.expiration_date
+
+                            # Generar información de la línea de recepción
+                            linea_info = {
+                                "id": move.id,
+                                "id_move": move.id,
+                                "id_recepcion": picking.id,
+                                "state": move.state,
+                                "product_id": product.id,
+                                "product_name": product.name,
+                                "product_code": product.default_code or "",
+                                "product_barcode": product.barcode or "",
+                                "product_tracking": product.tracking or "",
+                                "fecha_vencimiento": fecha_vencimiento or "",
+                                "dias_vencimiento": product.expiration_time if hasattr(product, "expiration_time") else "",
+                                "other_barcodes": array_barcodes,
+                                "product_packing": array_packing,
+                                "quantity_ordered": purchase_line.product_uom_qty if purchase_line else move.product_uom_qty,
+                                "quantity_to_receive": move.product_uom_qty,
+                                # "quantity_done": move.quantity,
+                                "uom": move.product_uom.name if move.product_uom else "UND",
+                                "location_dest_id": move.location_dest_id.id or 0,
+                                "location_dest_name": move.location_dest_id.display_name or "",
+                                "location_dest_barcode": move.location_dest_id.barcode or "",
+                                "location_id": move.location_id.id or 0,
+                                "location_name": move.location_id.display_name or "",
+                                "location_barcode": move.location_id.barcode or "",
+                                "weight": product.weight or 0,
+                                "cantidad_faltante": cantidad_faltante,
+                                "maneja_temperatura": maneja_temperatura,
+                                "temperatura": temperatura,
+                                # "imagen": imagen,
+                            }
+
+                            recepcion_info["lineas_recepcion"].append(linea_info)
+
+                        # ✅ Agregar las líneas de move_line que tengan is_done_item en True
+                        # Verificación para campos personalizados
+
+                        move_lines_done = move.move_line_ids.filtered(lambda ml: ml.is_done_item)
+                        for move_line in move_lines_done:
+                            cantidad_faltante = move.product_uom_qty - move_line.quantity
+
+                            # Crear información de la línea enviada
+                            linea_enviada_info = {
+                                "id": move_line.id,
+                                "id_move_line": move_line.id,
+                                "id_move": move_line.id,
+                                # "id_move": move.id,
+                                "state": move_line.state,
+                                "id_recepcion": picking.id,
+                                "product_id": product.id,
+                                "product_name": product.name,
+                                "product_code": product.default_code or "",
+                                "product_barcode": product.barcode or "",
+                                "product_tracking": product.tracking or "",
+                                "quantity_ordered": purchase_line.product_uom_qty if purchase_line else move.product_uom_qty,
+                                "quantity_to_receive": move.product_uom_qty,
+                                "quantity_done": move_line.quantity,
+                                "cantidad_faltante": cantidad_faltante,
+                                "uom": move_line.product_uom_id.name if move_line.product_uom_id else "UND",
+                                "location_dest_id": move_line.location_dest_id.id or 0,
+                                "location_dest_name": move_line.location_dest_id.display_name or "",
+                                "location_dest_barcode": move_line.location_dest_id.barcode or "",
+                                "location_id": move_line.location_id.id or 0,
+                                "location_name": move_line.location_id.display_name or "",
+                                "location_barcode": move_line.location_id.barcode or "",
+                                # Campos personalizados con manejo de fallback
+                                "is_done_item": move_line.is_done_item if hasattr(move_line, "is_done_item") else (move_line.quantity > 0),
+                                "date_transaction": move_line.date_transaction if hasattr(move_line, "date_transaction") else "",
+                                "observation": move_line.new_observation if hasattr(move_line, "new_observation") else "",
+                                "time": move_line.time if hasattr(move_line, "time") else "",
+                                "user_operator_id": move_line.user_operator_id.id if hasattr(move_line, "user_operator_id") and move_line.user_operator_id else 0,
+                                "maneja_temperatura": maneja_temperatura,
+                                "temperatura": move_line.temperature if hasattr(move_line, "temperature") else 0,
+                                "image": f"{base_url}/api/view_imagen_linea_recepcion/{move_line.id}" if hasattr(move_line, "imagen") and move_line.imagen else "",
+                                "image_novedad": f"{base_url}/api/view_imagen_observation/{move_line.id}" if hasattr(move_line, "imagen_observation") and move_line.imagen_observation else "",
+                            }
+
+                            # Agregar información del lote si existe
+                            if move_line.lot_id:
+                                linea_enviada_info.update(
+                                    {
+                                        "lot_id": move_line.lot_id.id,
+                                        "lot_name": move_line.lot_id.name,
+                                        "fecha_vencimiento": move_line.lot_id.expiration_date if hasattr(move_line.lot_id, "expiration_date") else "",
+                                    }
+                                )
+                            elif move_line.lot_name:
+                                linea_enviada_info.update(
+                                    {
+                                        "lot_id": 0,
+                                        "lot_name": move_line.lot_name,
+                                        "fecha_vencimiento": "",
+                                    }
+                                )
+
+                            recepcion_info["lineas_recepcion_enviadas"].append(linea_enviada_info)
+
+                    # Solo añadir recepciones que tengan líneas pendientes
+                    # if recepcion_info["lineas_recepcion"]:
+                    #     recepcion_info["numero_lineas"] = len(recepcion_info["lineas_recepcion"])
+                    #     recepcion_info["numero_items"] = sum(linea["quantity_to_receive"] for linea in recepcion_info["lineas_recepcion"])
+
+                    # array_recepciones.append(recepcion_info)
+
+                    array_recepciones.append(recepcion_info)
+
+            return {"code": 200, "result": array_recepciones}
+
+        except AccessError as e:
+            return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+        except Exception as err:
+            return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
+
+    ## GET OBTENER LAS DEVOLUCIONES PENDIENTES
+    @http.route("/api/recepciones/devs", auth="user", type="json", methods=["GET"])
+    def get_recepciones_devs(self):
+        try:
+            user = request.env.user
+
+            # ✅ Validar usuario
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            array_recepciones = []
+
+            # Generar URLs para ver la imagen
 
             # Obtener almacenes del usuario
             allowed_warehouses = obtener_almacenes_usuario(user)
@@ -38,6 +407,7 @@ class TransaccionRecepcionController(http.Controller):
                             ("state", "in", ["assigned", "confirmed"]),
                             ("picking_type_code", "=", "incoming"),
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
+                            ("picking_type_id.sequence_code", "in", ["DEV"]),
                             # ("is_return_picking", "=", False),
                             # ("user_id", "in", [user.id, False]),  # Asignadas al usuario o sin asignar
                             ("responsable_id", "in", [user.id, False]),  # Asignadas al usuario o sin asignar
@@ -333,6 +703,7 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
+    ## GET OBTENER LAS DEVOLUCIONES POR BATCH
     @http.route("/api/recepciones/batchs", auth="user", type="json", methods=["GET"])
     def get_recepciones_batch(self):
         try:
@@ -1044,6 +1415,7 @@ class TransaccionRecepcionController(http.Controller):
 
                 array_result.append(
                     {
+                        "id": move_line.id,
                         "producto": product.name,
                         "cantidad": cantidad,
                         "lote": lot.name if lot else "",
@@ -1064,6 +1436,60 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
+    @http.route("/api/update_recepcion", auth="user", type="json", methods=["POST"], csrf=False)
+    def update_recepcion(self, **auth):
+        try:
+            user = request.env.user
+            if not user:
+                return {"code": 400, "msg": "Usuario no encontrado"}
+
+            id_recepcion = auth.get("id_recepcion", 0)
+            list_items = auth.get("list_items", [])
+
+            recepcion = request.env["stock.picking"].sudo().search([("id", "=", id_recepcion), ("picking_type_code", "=", "incoming"), ("state", "!=", "done")], limit=1)
+
+            if not recepcion:
+                return {"code": 400, "msg": f"Recepción no encontrada o ya completada con ID {id_recepcion}"}
+
+            array_result = []
+
+            for item in list_items:
+                move_line_id = item.get("id_move")
+
+                # Buscar la línea de movimiento
+                move_line = request.env["stock.move.line"].sudo().browse(move_line_id)
+
+                if not move_line.exists():
+                    array_result.append({"error": True, "mensaje": f"Línea {move_line_id} no encontrada"})
+                    continue
+
+                if move_line.picking_id.id != recepcion.id:
+                    array_result.append({"error": True, "mensaje": f"Línea {move_line_id} no pertenece a esta recepción"})
+                    continue
+
+                # Guardar información antes de eliminar para el resultado
+                product_name = move_line.product_id.name
+                move_id = move_line.move_id.id
+                product_id = move_line.product_id.id
+                cantidad = move_line.quantity
+
+                # IMPORTANTE: Verificar otras líneas del mismo movimiento
+                otras_lineas = recepcion.move_line_ids.filtered(lambda l: l.move_id.id == move_id and l.id != move_line_id and l.is_done_item)
+
+                # Registramos las líneas que deben seguir apareciendo
+                move = move_line.move_id
+
+                # Eliminar la línea
+                move_line.sudo().unlink()
+
+                array_result.append({"error": False, "mensaje": f"Línea {move_line_id} eliminada correctamente", "producto": product_name, "cantidad": cantidad, "id_move": move_id, "id_producto": product_id, "id_move_deleted": move_line_id})
+
+            return {"code": 200, "result": array_result}
+
+        except Exception as e:
+            return {"code": 500, "msg": f"Error interno: {str(e)}"}
+
+    ## POST Enviar Temperatura de Recepción
     @http.route("/api/send_temperatura", auth="user", type="json", methods=["POST"], csrf=False)
     def send_temperatura(self, **auth):
         try:
@@ -1086,146 +1512,7 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as e:
             return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
-    # @http.route("/api/send_recepcion/batch", auth="user", type="json", methods=["POST"], csrf=False)
-    # def send_recepcion_batch(self, **auth):
-    #     try:
-    #         user = request.env.user
-    #         if not user:
-    #             return {"code": 400, "msg": "Usuario no encontrado"}
-
-    #         id_batch = auth.get("id_batch", 0)
-    #         list_items = auth.get("list_items", [])
-
-    #         array_result = []
-
-    #         # ✅ Validar si el id_batch existe
-    #         batch = request.env["stock.picking.batch"].sudo().browse(id_batch)
-    #         if not batch.exists():
-    #             return {"code": 400, "msg": f"El id_batch {id_batch} no existe"}
-
-    #         for item in list_items:
-    #             move_id = item.get("id_move")
-    #             product_id = item.get("id_producto")
-    #             lote_id = item.get("lote_producto")
-    #             ubicacion_destino = item.get("ubicacion_destino")
-    #             cantidad = item.get("cantidad_separada")
-    #             fecha_transaccion = item.get("fecha_transaccion")
-    #             observacion = item.get("observacion")
-    #             id_operario = item.get("id_operario")
-    #             time_line = item.get("time_line")
-
-    #             if not product_id or not cantidad:
-    #                 continue
-
-    #             product = request.env["product.product"].sudo().browse(product_id)
-    #             if not product.exists():
-    #                 continue
-
-    #             move_line = request.env["stock.move.line"].sudo().browse(move_id)
-
-    #             # return {"code": 400, "msg": f"El producto {product.name} no está en la recepción cantidad {cantidad} de la linea {move_line.quantity}"}
-
-    #             if move_line.exists():
-    #                 if move_line.quantity >= cantidad:
-    #                     if observacion.lower() != "sin novedad":
-    #                         array_result.append({"code": 400, "msg": f"Numero 1"})
-    #                         move_line.write(
-    #                             {
-    #                                 "quantity": cantidad,
-    #                                 "location_dest_id": ubicacion_destino,
-    #                                 "lot_name": lote_id,
-    #                                 "new_observation_packing": observacion,
-    #                                 "user_operator_id": id_operario,
-    #                                 "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
-    #                                 "time_packing": time_line,
-    #                                 "is_done_item_pack": True,
-    #                             }
-    #                         )
-
-    #                     if cantidad < move_line.quantity:
-    #                         array_result.append({"code": 400, "msg": f"Numero 2"})
-    #                         cantidad_original = move_line.quantity
-
-    #                         # ✅ 1. Restar a la original
-    #                         move_line.write({"quantity": cantidad_original - cantidad})
-
-    #                         # ✅ 2. Copiar la línea original
-    #                         new_line_vals = move_line.copy_data()[0]
-
-    #                         new_line_vals.update(
-    #                             {
-    #                                 "quantity": cantidad,
-    #                                 "location_dest_id": ubicacion_destino,
-    #                                 "lot_name": lote_id,
-    #                                 "new_observation_packing": observacion,
-    #                                 "user_operator_id": id_operario,
-    #                                 "time_packing": time_line,
-    #                                 "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
-    #                                 "is_done_item_pack": True,
-    #                             }
-    #                         )
-
-    #                         # ✅ 4. Crear la línea nueva con los valores actualizados
-    #                         new_line = request.env["stock.move.line"].sudo().create(new_line_vals)
-
-    #                         new_line.write({"is_done_item_pack": True})
-
-    #                     else:
-    #                         # ✅ 3. Actualizar la línea original con los nuevos valores
-    #                         array_result.append({"code": 400, "msg": f"Numero 3"})
-
-    #                         move_line.write(
-    #                             {
-    #                                 "location_dest_id": ubicacion_destino,
-    #                                 "lot_name": lote_id,
-    #                                 "new_observation_packing": observacion,
-    #                                 "user_operator_id": id_operario,
-    #                                 "time_packing": time_line,
-    #                                 "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
-    #                                 "is_done_item_pack": True,
-    #                             }
-    #                         )
-
-    #                 elif cantidad == move_line.quantity:
-    #                     array_result.append({"code": 400, "msg": f"Numero 4"})
-    #                     move_line.write(
-    #                         {
-    #                             "location_dest_id": ubicacion_destino,
-    #                             "lot_name": lote_id,
-    #                             "new_observation_packing": observacion,
-    #                             "user_operator_id": id_operario,
-    #                             "time_packing": time_line,
-    #                             "date_transaction_packing": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
-    #                             "is_done_item_pack": True,
-    #                         }
-    #                     )
-
-    #                 else:
-    #                     return {"code": 400, "msg": f"La cantidad {cantidad} no puede ser mayor a la cantidad {move_line.quantity}"}
-
-    #             else:
-    #                 return {"code": 400, "msg": f"La línea de movimiento {move_id} no existe"}
-
-    #             array_result.append(
-    #                 {
-    #                     "producto": product.name,
-    #                     "cantidad": cantidad,
-    #                     "lote": lote_id,
-    #                     "ubicacion_destino": ubicacion_destino,
-    #                     "fecha_transaccion": fecha_transaccion,
-    #                     "date_transaction": move_line.date_transaction_packing,
-    #                     "new_observation_packing": move_line.new_observation_packing,
-    #                     "time": move_line.time_packing,
-    #                     "user_operator_id": move_line.user_operator_id.id,
-    #                     "is_done_item_pack": move_line.is_done_item_pack,
-    #                 }
-    #             )
-
-    #         return {"code": 200, "result": array_result}
-
-    #     except Exception as e:
-    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
-
+    ## POST Enviar Recepción por Batch
     @http.route("/api/send_recepcion/batch", auth="user", type="json", methods=["POST"], csrf=False)
     def send_recepcion_batch(self, **auth):
         try:
@@ -1380,6 +1667,569 @@ class TransaccionRecepcionController(http.Controller):
             import traceback
 
             return {"code": 500, "msg": f"Error interno: {str(e)}", "traceback": traceback.format_exc()}
+
+    ## POST para enviar la imagen a una línea de recepción
+    # @http.route("/api/send_image_linea_recepcion", auth="user", type="http", methods=["POST"], csrf=False)
+    # def send_image_linea_recepcion(self, **post):
+    #     try:
+    #         user = request.env.user
+    #         if not user:
+    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+    #         id_linea_recepcion = post.get("move_line_id")
+    #         image_file = request.httprequest.files.get("image_data")
+    #         temperatura = post.get("temperatura", 0.0)
+
+    #         # Validar ID de línea de recepción
+    #         if not id_linea_recepcion:
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+    #         # Validar archivo de imagen
+    #         if not image_file:
+    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+    #         # Convertir ID a entero si viene como string
+    #         try:
+    #             id_linea_recepcion = int(id_linea_recepcion)
+    #         except (ValueError, TypeError):
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+    #         # Buscar la línea de recepción por ID
+    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+    #         if not linea_recepcion:
+    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+    #         # Validar tipo de archivo (opcional)
+    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
+    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+    #         if file_extension not in allowed_extensions:
+    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
+
+    #         # Leer el contenido del archivo y codificarlo a base64
+    #         image_data_bytes = image_file.read()
+    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+    #         # Guardar la imagen codificada en base64
+    #         linea_recepcion.sudo().write({"imagen": image_data_base64, "temperature": temperatura})
+
+    #         return request.make_json_response({"code": 200, "result": "Imagen y temperatura guardadas correctamente", "line_id": id_linea_recepcion})
+
+    #     except Exception as e:
+    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
+
+    @http.route("/api/send_image_linea_recepcion", auth="user", type="http", methods=["POST"], csrf=False)
+    def send_image_linea_recepcion(self, **post):
+        try:
+            user = request.env.user
+            if not user:
+                return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+            id_linea_recepcion = post.get("move_line_id")
+            image_file = request.httprequest.files.get("image_data")
+            temperatura = post.get("temperatura", 0.0)
+
+            # Validar ID de línea de recepción
+            if not id_linea_recepcion:
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+            # Validar archivo de imagen
+            if not image_file:
+                return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+            # Convertir ID a entero si viene como string
+            try:
+                id_linea_recepcion = int(id_linea_recepcion)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+            # Validar tipo de archivo
+            allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+            if file_extension not in allowed_extensions:
+                return request.make_json_response({"code": 400, "msg": f"Formato de imagen no permitido. Formatos válidos: {', '.join(allowed_extensions)}"})
+
+            # Validar tamaño del archivo (opcional - ejemplo: máximo 5MB)
+            max_size = 5 * 1024 * 1024  # 5MB en bytes
+            image_file.seek(0, 2)  # Ir al final del archivo
+            file_size = image_file.tell()
+            image_file.seek(0)  # Volver al inicio
+
+            if file_size > max_size:
+                return request.make_json_response({"code": 400, "msg": "El archivo es demasiado grande. Tamaño máximo: 5MB"})
+
+            # Convertir temperatura a float
+            try:
+                temperatura = float(temperatura)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "Temperatura debe ser un número"})
+
+            # Leer el contenido del archivo y codificarlo a base64
+            image_data_bytes = image_file.read()
+            image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+            # Guardar la imagen codificada en base64 y la temperatura
+            linea_recepcion.sudo().write({"imagen": image_data_base64, "temperature": temperatura})
+
+            # Generar URLs para ver la imagen
+            base_url = request.httprequest.host_url.rstrip("/")
+            image_url = f"{base_url}/api/view_imagen_linea_recepcion/{id_linea_recepcion}"
+            json_url = f"{base_url}/api/get_imagen_linea_recepcion/{id_linea_recepcion}"
+
+            return request.make_json_response(
+                {
+                    "code": 200,
+                    "result": "Imagen y temperatura guardadas correctamente",
+                    "line_id": id_linea_recepcion,
+                    "temperature": temperatura,
+                    "filename": image_file.filename,
+                    "image_size": len(image_data_bytes),
+                    "image_url": image_url,  # URL para mostrar imagen directa
+                    "json_url": json_url,  # URL para obtener datos en JSON
+                    "product_name": linea_recepcion.product_id.name if linea_recepcion.product_id else None,
+                }
+            )
+
+        except Exception as e:
+            _logger.error(f"Error en send_image_linea_recepcion: {str(e)}", exc_info=True)
+            return request.make_json_response({"code": 500, "msg": "Error interno del servidor"})
+
+    @http.route("/api/view_imagen_linea_recepcion/<int:line_id>", auth="user", type="http", methods=["GET"], csrf=False)
+    def view_imagen_linea_recepcion(self, line_id, **kw):
+        """
+        Endpoint para visualizar la imagen de una línea de recepción (campo 'imagen')
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_response("Línea de recepción no encontrada", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen:
+                return request.make_response("No hay imagen disponible para esta línea", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Decodificar la imagen de base64
+            try:
+                image_data = base64.b64decode(linea_recepcion.imagen)
+            except Exception as e:
+                _logger.error(f"Error al decodificar imagen: {str(e)}")
+                return request.make_response("Error al procesar la imagen", status=500, headers=[("Content-Type", "text/plain")])
+
+            # Detectar el tipo de contenido de la imagen
+            content_type = "image/jpeg"  # Por defecto
+
+            # Detectar tipo de imagen por los magic bytes
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            # Crear la respuesta con la imagen
+            response = request.make_response(image_data, headers=[("Content-Type", content_type), ("Content-Length", str(len(image_data))), ("Cache-Control", "public, max-age=3600"), ("Content-Disposition", f"inline; filename=linea_recepcion_{line_id}.jpg")])  # Cache por 1 hora
+
+            return response
+
+        except Exception as e:
+            _logger.error(f"Error en view_imagen_linea_recepcion: {str(e)}", exc_info=True)
+            return request.make_response("Error interno del servidor", status=500, headers=[("Content-Type", "text/plain")])
+
+    @http.route("/api/get_imagen_linea_recepcion/<int:line_id>", auth="user", type="json", methods=["GET"], csrf=False)
+    def get_imagen_linea_recepcion_json(self, line_id, **kw):
+        """
+        Endpoint que devuelve la imagen de línea de recepción en formato JSON con base64
+        Incluye también la temperatura si está disponible
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción no encontrada"}
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen:
+                return {"code": 404, "msg": "No hay imagen disponible para esta línea"}
+
+            # Detectar tipo de imagen
+            image_data = base64.b64decode(linea_recepcion.imagen)
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            return {
+                "code": 200,
+                "result": {
+                    "line_id": line_id,
+                    "image_base64": linea_recepcion.imagen,
+                    "content_type": content_type,
+                    "size": len(image_data),
+                    "temperature": linea_recepcion.temperature if hasattr(linea_recepcion, "temperature") else None,
+                    "move_id": linea_recepcion.move_id.id if linea_recepcion.move_id else None,
+                    "product_name": linea_recepcion.product_id.name if linea_recepcion.product_id else None,
+                    "product_code": linea_recepcion.product_id.default_code if linea_recepcion.product_id else None,
+                    "qty_done": linea_recepcion.qty_done,
+                    "location_dest": linea_recepcion.location_dest_id.name if linea_recepcion.location_dest_id else None,
+                },
+            }
+
+        except Exception as e:
+            _logger.error(f"Error en get_imagen_linea_recepcion_json: {str(e)}", exc_info=True)
+            return {"code": 500, "msg": "Error interno del servidor"}
+
+    @http.route("/api/delete_imagen_linea_recepcion/<int:line_id>", auth="user", type="json", methods=["DELETE"], csrf=False)
+    def delete_imagen_linea_recepcion(self, line_id, **kw):
+        """
+        Endpoint para eliminar la imagen de una línea de recepción
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción no encontrada"}
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen:
+                return {"code": 404, "msg": "No hay imagen para eliminar"}
+
+            # Eliminar la imagen (puedes decidir si también eliminar la temperatura)
+            linea_recepcion.sudo().write(
+                {
+                    "imagen": False,
+                    # "temperature": 0.0  # Descomenta si quieres resetear la temperatura también
+                }
+            )
+
+            return {"code": 200, "result": "Imagen eliminada correctamente", "line_id": line_id}
+
+        except Exception as e:
+            _logger.error(f"Error en delete_imagen_linea_recepcion: {str(e)}", exc_info=True)
+            return {"code": 500, "msg": "Error interno del servidor"}
+
+    @http.route("/api/update_imagen_linea_recepcion/<int:line_id>", auth="user", type="http", methods=["PUT"], csrf=False)
+    def update_imagen_linea_recepcion(self, line_id, **post):
+        """
+        Endpoint para actualizar solo la imagen de una línea de recepción existente
+        """
+        try:
+            user = request.env.user
+            if not user:
+                return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+            image_file = request.httprequest.files.get("image_data")
+            temperatura = post.get("temperatura")
+
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+            # Validar archivo de imagen si se envía
+            if image_file:
+                # Validar tipo de archivo
+                allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+                file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+                if file_extension not in allowed_extensions:
+                    return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
+
+                # Leer el contenido del archivo y codificarlo a base64
+                image_data_bytes = image_file.read()
+                image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+            else:
+                image_data_base64 = linea_recepcion.imagen  # Mantener la imagen actual
+
+            # Preparar datos para actualizar
+            update_data = {"imagen": image_data_base64}
+
+            # Actualizar temperatura si se proporciona
+            if temperatura is not None:
+                try:
+                    update_data["temperature"] = float(temperatura)
+                except (ValueError, TypeError):
+                    return request.make_json_response({"code": 400, "msg": "Temperatura debe ser un número"})
+
+            # Actualizar la línea de recepción
+            linea_recepcion.sudo().write(update_data)
+
+            return request.make_json_response({"code": 200, "result": "Línea de recepción actualizada correctamente", "line_id": line_id, "image_updated": bool(image_file), "temperature_updated": temperatura is not None})
+
+        except Exception as e:
+            _logger.error(f"Error en update_imagen_linea_recepcion: {str(e)}", exc_info=True)
+            return request.make_json_response({"code": 500, "msg": "Error interno del servidor"})
+
+    # @http.route("/api/send_imagen_observation", auth="user", type="http", methods=["POST"], csrf=False)
+    # def send_imagen_observation(self, **post):
+    #     try:
+    #         user = request.env.user
+    #         if not user:
+    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+    #         id_move = post.get("id_move")
+    #         image_file = request.httprequest.files.get("image_data")
+
+    #         # Validar ID de línea de recepción
+    #         if not id_move:
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
+
+    #         # Validar archivo de imagen
+    #         if not image_file:
+    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+    #         # Convertir ID a entero si viene como string
+    #         try:
+    #             id_move = int(id_move)
+    #         except (ValueError, TypeError):
+    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
+
+    #         # Buscar la línea de recepción por ID
+    #         stock_move = request.env["stock.move"].sudo().search([("id", "=", id_move)], limit=1)
+
+    #         # obtener el ultimo id de stock move line relacionado a stock move
+    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("move_id", "=", stock_move.id)], limit=1)
+
+    #         return linea_recepcion
+
+    #         if not linea_recepcion:
+    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
+
+    #         # Validar tipo de archivo (opcional)
+    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
+    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+    #         if file_extension not in allowed_extensions:
+    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
+
+    #         # Leer el contenido del archivo y codificarlo a base64
+    #         image_data_bytes = image_file.read()
+    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+    #         # Guardar la imagen codificada en base64 y la observación
+    #         linea_recepcion.sudo().write({"imagen_observation": image_data_base64})
+
+    #         # 🔥 Generar la URL para ver la imagen
+    #         base_url = request.httprequest.host_url.rstrip("/")
+    #         image_url = f"{base_url}/api/view_imagen_observation/{linea_recepcion}"
+
+    #         # return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": id_linea_recepcion, "image_url": image_url})  # 🔥 URL para ver la imagen
+    #         return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": linea_recepcion})
+
+    #     except Exception as e:
+    #         _logger.error(f"Error en send_imagen_observation: {str(e)}", exc_info=True)
+    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
+
+    @http.route("/api/send_imagen_observation", auth="user", type="http", methods=["POST"], csrf=False)
+    def send_imagen_observation(self, **post):
+        try:
+            user = request.env.user
+            if not user:
+                return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
+
+            id_move = post.get("id_move")
+            image_file = request.httprequest.files.get("image_data")
+
+            # Validar ID de stock move
+            if not id_move:
+                return request.make_json_response({"code": 400, "msg": "ID de stock move no válido"})
+
+            # Validar archivo de imagen
+            if not image_file:
+                return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
+
+            # Convertir ID a entero si viene como string
+            try:
+                id_move = int(id_move)
+            except (ValueError, TypeError):
+                return request.make_json_response({"code": 400, "msg": "ID de stock move debe ser un número"})
+
+            # Buscar el stock move por ID
+            stock_move = request.env["stock.move"].sudo().search([("id", "=", id_move)], limit=1)
+
+            if not stock_move:
+                return request.make_json_response({"code": 404, "msg": "Stock move no encontrado"})
+
+            # Obtener la última línea de stock move relacionada al stock move
+            # Ordenamos por ID descendente para obtener la más reciente
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("move_id", "=", stock_move.id)], order="id desc", limit=1)
+
+            if not linea_recepcion:
+                return request.make_json_response({"code": 404, "msg": "No se encontraron líneas de recepción para este stock move"})
+
+            # Validar tipo de archivo
+            allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
+
+            if file_extension not in allowed_extensions:
+                return request.make_json_response({"code": 400, "msg": f"Formato de imagen no permitido. Formatos válidos: {', '.join(allowed_extensions)}"})
+
+            # Validar tamaño del archivo (opcional - ejemplo: máximo 5MB)
+            max_size = 5 * 1024 * 1024  # 5MB en bytes
+            image_file.seek(0, 2)  # Ir al final del archivo
+            file_size = image_file.tell()
+            image_file.seek(0)  # Volver al inicio
+
+            if file_size > max_size:
+                return request.make_json_response({"code": 400, "msg": "El archivo es demasiado grande. Tamaño máximo: 5MB"})
+
+            # Leer el contenido del archivo y codificarlo a base64
+            image_data_bytes = image_file.read()
+            image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
+
+            # Guardar la imagen codificada en base64 en la línea de recepción
+            linea_recepcion.sudo().write({"imagen_observation": image_data_base64})
+
+            # Generar la URL para ver la imagen (si tienes un endpoint para visualizar)
+            base_url = request.httprequest.host_url.rstrip("/")
+            image_url = f"{base_url}/api/view_imagen_observation/{linea_recepcion.id}"
+
+            return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "stock_move_id": stock_move.id, "stock_move_line_id": linea_recepcion.id, "image_url": image_url, "filename": image_file.filename})
+
+        except Exception as e:
+            _logger.error(f"Error en send_imagen_observation: {str(e)}", exc_info=True)
+            return request.make_json_response({"code": 500, "msg": f"Error interno del servidor"})
+
+    @http.route("/api/view_imagen_observation/<int:line_id>", auth="user", type="http", methods=["GET"], csrf=False)
+    def view_imagen_observation(self, line_id, **kw):
+        """
+        Endpoint para visualizar la imagen de observación de una línea de recepción
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return request.make_response("Línea de recepción no encontrada", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen_observation:
+                return request.make_response("No hay imagen disponible para esta línea", status=404, headers=[("Content-Type", "text/plain")])
+
+            # Decodificar la imagen de base64
+            try:
+                image_data = base64.b64decode(linea_recepcion.imagen_observation)
+            except Exception as e:
+                _logger.error(f"Error al decodificar imagen: {str(e)}")
+                return request.make_response("Error al procesar la imagen", status=500, headers=[("Content-Type", "text/plain")])
+
+            # Detectar el tipo de contenido de la imagen
+            # Puedes usar python-magic si está disponible, o detectar por los primeros bytes
+            content_type = "image/jpeg"  # Por defecto
+
+            # Detectar tipo de imagen por los magic bytes
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            # Crear la respuesta con la imagen
+            response = request.make_response(image_data, headers=[("Content-Type", content_type), ("Content-Length", str(len(image_data))), ("Cache-Control", "public, max-age=3600"), ("Content-Disposition", f"inline; filename=observation_{line_id}.jpg")])  # Cache por 1 hora
+
+            return response
+
+        except Exception as e:
+            _logger.error(f"Error en view_imagen_observation: {str(e)}", exc_info=True)
+            return request.make_response("Error interno del servidor", status=500, headers=[("Content-Type", "text/plain")])
+
+    @http.route("/api/get_imagen_observation/<int:line_id>", auth="user", type="json", methods=["GET"], csrf=False)
+    def get_imagen_observation_json(self, line_id, **kw):
+        """
+        Endpoint alternativo que devuelve la imagen en formato JSON con base64
+        Útil para aplicaciones que prefieren trabajar con JSON
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción no encontrada"}
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen_observation:
+                return {"code": 404, "msg": "No hay imagen disponible para esta línea"}
+
+            # Detectar tipo de imagen
+            image_data = base64.b64decode(linea_recepcion.imagen_observation)
+            content_type = "image/jpeg"  # Por defecto
+
+            if image_data.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                content_type = "image/gif"
+            elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:12]:
+                content_type = "image/webp"
+            elif image_data.startswith(b"BM"):
+                content_type = "image/bmp"
+
+            return {
+                "code": 200,
+                "result": {
+                    "line_id": line_id,
+                    "image_base64": linea_recepcion.imagen_observation,
+                    "content_type": content_type,
+                    "size": len(image_data),
+                    "move_id": linea_recepcion.move_id.id if linea_recepcion.move_id else None,
+                    "product_name": linea_recepcion.product_id.name if linea_recepcion.product_id else None,
+                },
+            }
+
+        except Exception as e:
+            _logger.error(f"Error en get_imagen_observation_json: {str(e)}", exc_info=True)
+            return {"code": 500, "msg": "Error interno del servidor"}
+
+    @http.route("/api/delete_imagen_observation/<int:line_id>", auth="user", type="json", methods=["DELETE"], csrf=False)
+    def delete_imagen_observation(self, line_id, **kw):
+        """
+        Endpoint para eliminar la imagen de observación de una línea de recepción
+        """
+        try:
+            # Buscar la línea de recepción por ID
+            linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", line_id)], limit=1)
+
+            if not linea_recepcion:
+                return {"code": 404, "msg": "Línea de recepción no encontrada"}
+
+            # Verificar si tiene imagen
+            if not linea_recepcion.imagen_observation:
+                return {"code": 404, "msg": "No hay imagen para eliminar"}
+
+            # Eliminar la imagen
+            linea_recepcion.sudo().write({"imagen_observation": False})
+
+            return {"code": 200, "result": "Imagen eliminada correctamente", "line_id": line_id}
+
+        except Exception as e:
+            _logger.error(f"Error en delete_imagen_observation: {str(e)}", exc_info=True)
+            return {"code": 500, "msg": "Error interno del servidor"}
 
     ## GET Obtener todas las ubicaciones
     @http.route("/api/ubicaciones", auth="user", type="json", methods=["GET"])
@@ -1729,7 +2579,8 @@ class TransaccionRecepcionController(http.Controller):
                     linea_enviada_info = {
                         "id": move_line.id,
                         "id_move_line": move_line.id,
-                        "id_move": move.id,
+                        "id_move": move_line.id,
+                        # "id_move": move.id,
                         "id_recepcion": recepcion.id,
                         "product_id": product.id,
                         "product_name": product.name,
