@@ -137,6 +137,8 @@ class TransaccionRecepcionController(http.Controller):
 
                         cantidad_faltante = move.product_uom_qty - sum(l.quantity for l in move.move_line_ids if l.is_done_item)
 
+                        novedad_bloqueante = move.move_line_ids.filtered(lambda ml: ml.new_observation and ml.new_observation.strip() and ml.new_observation.strip().lower() != "sin novedad")
+
                         maneja_temperatura = product.temperature_control if hasattr(product, "temperature_control") else False
                         temperatura = move.temperature if hasattr(move, "temperature") else 0
                         imagen = move.imagen if hasattr(move, "imagen") else ""
@@ -225,7 +227,8 @@ class TransaccionRecepcionController(http.Controller):
 
                             recepcion_info["lineas_recepcion"].append(linea_info)
 
-                        elif cantidad_faltante > 0:
+                        # necesito que se valide que si en move_line_ids no hay novedades diferentes a Sin novedad o diferente a vacio. Por ejemplo si la novedad es diferente a "Sin novedad" o está vacía, entonces se debe considerar como una línea pendiente.
+                        elif cantidad_faltante > 0 and not novedad_bloqueante:
                             # Obtener códigos de barras adicionales
                             array_barcodes = []
                             if hasattr(product, "barcode_ids"):
@@ -1668,56 +1671,6 @@ class TransaccionRecepcionController(http.Controller):
 
             return {"code": 500, "msg": f"Error interno: {str(e)}", "traceback": traceback.format_exc()}
 
-    ## POST para enviar la imagen a una línea de recepción
-    # @http.route("/api/send_image_linea_recepcion", auth="user", type="http", methods=["POST"], csrf=False)
-    # def send_image_linea_recepcion(self, **post):
-    #     try:
-    #         user = request.env.user
-    #         if not user:
-    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
-
-    #         id_linea_recepcion = post.get("move_line_id")
-    #         image_file = request.httprequest.files.get("image_data")
-    #         temperatura = post.get("temperatura", 0.0)
-
-    #         # Validar ID de línea de recepción
-    #         if not id_linea_recepcion:
-    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
-
-    #         # Validar archivo de imagen
-    #         if not image_file:
-    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
-
-    #         # Convertir ID a entero si viene como string
-    #         try:
-    #             id_linea_recepcion = int(id_linea_recepcion)
-    #         except (ValueError, TypeError):
-    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
-
-    #         # Buscar la línea de recepción por ID
-    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("id", "=", id_linea_recepcion)], limit=1)
-
-    #         if not linea_recepcion:
-    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
-
-    #         # Validar tipo de archivo (opcional)
-    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
-    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
-    #         if file_extension not in allowed_extensions:
-    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
-
-    #         # Leer el contenido del archivo y codificarlo a base64
-    #         image_data_bytes = image_file.read()
-    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
-
-    #         # Guardar la imagen codificada en base64
-    #         linea_recepcion.sudo().write({"imagen": image_data_base64, "temperature": temperatura})
-
-    #         return request.make_json_response({"code": 200, "result": "Imagen y temperatura guardadas correctamente", "line_id": id_linea_recepcion})
-
-    #     except Exception as e:
-    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
-
     @http.route("/api/send_image_linea_recepcion", auth="user", type="http", methods=["POST"], csrf=False)
     def send_image_linea_recepcion(self, **post):
         try:
@@ -1980,65 +1933,6 @@ class TransaccionRecepcionController(http.Controller):
         except Exception as e:
             _logger.error(f"Error en update_imagen_linea_recepcion: {str(e)}", exc_info=True)
             return request.make_json_response({"code": 500, "msg": "Error interno del servidor"})
-
-    # @http.route("/api/send_imagen_observation", auth="user", type="http", methods=["POST"], csrf=False)
-    # def send_imagen_observation(self, **post):
-    #     try:
-    #         user = request.env.user
-    #         if not user:
-    #             return request.make_json_response({"code": 400, "msg": "Usuario no encontrado"})
-
-    #         id_move = post.get("id_move")
-    #         image_file = request.httprequest.files.get("image_data")
-
-    #         # Validar ID de línea de recepción
-    #         if not id_move:
-    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción no válido"})
-
-    #         # Validar archivo de imagen
-    #         if not image_file:
-    #             return request.make_json_response({"code": 400, "msg": "No se recibió ningún archivo de imagen"})
-
-    #         # Convertir ID a entero si viene como string
-    #         try:
-    #             id_move = int(id_move)
-    #         except (ValueError, TypeError):
-    #             return request.make_json_response({"code": 400, "msg": "ID de línea de recepción debe ser un número"})
-
-    #         # Buscar la línea de recepción por ID
-    #         stock_move = request.env["stock.move"].sudo().search([("id", "=", id_move)], limit=1)
-
-    #         # obtener el ultimo id de stock move line relacionado a stock move
-    #         linea_recepcion = request.env["stock.move.line"].sudo().search([("move_id", "=", stock_move.id)], limit=1)
-
-    #         return linea_recepcion
-
-    #         if not linea_recepcion:
-    #             return request.make_json_response({"code": 404, "msg": "Línea de recepción no encontrada"})
-
-    #         # Validar tipo de archivo (opcional)
-    #         allowed_extensions = ["jpg", "jpeg", "png", "gif", "bmp"]
-    #         file_extension = image_file.filename.lower().split(".")[-1] if image_file.filename else ""
-    #         if file_extension not in allowed_extensions:
-    #             return request.make_json_response({"code": 400, "msg": "Formato de imagen no permitido"})
-
-    #         # Leer el contenido del archivo y codificarlo a base64
-    #         image_data_bytes = image_file.read()
-    #         image_data_base64 = base64.b64encode(image_data_bytes).decode("utf-8")
-
-    #         # Guardar la imagen codificada en base64 y la observación
-    #         linea_recepcion.sudo().write({"imagen_observation": image_data_base64})
-
-    #         # 🔥 Generar la URL para ver la imagen
-    #         base_url = request.httprequest.host_url.rstrip("/")
-    #         image_url = f"{base_url}/api/view_imagen_observation/{linea_recepcion}"
-
-    #         # return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": id_linea_recepcion, "image_url": image_url})  # 🔥 URL para ver la imagen
-    #         return request.make_json_response({"code": 200, "result": "Imagen de observación guardada correctamente", "recepcion_id": linea_recepcion})
-
-    #     except Exception as e:
-    #         _logger.error(f"Error en send_imagen_observation: {str(e)}", exc_info=True)
-    #         return request.make_json_response({"code": 500, "msg": f"Error interno: {str(e)}"})
 
     @http.route("/api/send_imagen_observation", auth="user", type="http", methods=["POST"], csrf=False)
     def send_imagen_observation(self, **post):
