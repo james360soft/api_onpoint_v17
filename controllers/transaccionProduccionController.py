@@ -134,8 +134,8 @@ class TransaccionProduccionController(http.Controller):
                                 "id_transferencia": picking.id,
                                 "batch_id": picking.id,  # ✅
                                 "id_product": product.id,
-                                "product_id": [product.id, product.name],  # ✅
-                                "product_name": product.name,
+                                "product_id": [product.id, product.display_name],  # ✅
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -200,8 +200,8 @@ class TransaccionProduccionController(http.Controller):
                             "id_transferencia": picking.id,
                             "batch_id": picking.id,  # ✅
                             "id_product": product.id,
-                            "product_id": [product.id, product.name],  # ✅
-                            "product_name": product.name,
+                            "product_id": [product.id, product.display_name],  # ✅
+                            "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",
@@ -351,7 +351,7 @@ class TransaccionProduccionController(http.Controller):
                                 "id_move": move.id,
                                 "id_transferencia": picking.id,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -412,7 +412,7 @@ class TransaccionProduccionController(http.Controller):
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
                             "product_id": product.id,
-                            "product_name": product.name,
+                            "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "product_barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",

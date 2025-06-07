@@ -446,7 +446,7 @@ class TransaccionDataPicking(http.Controller):
                             "origin": picking.origin or "",
                             "quantity_separate": move["qty_done"],  # Cantidad separada si el item ya fue separado
                             "observation": move["new_observation"] or "",  # Observación del movimiento
-                            "time_separate": float(move.get("time", 0)) if move.get("time") else 0.0,
+                            "time_separate": move["time"] or "",  # Hora de separación del item
                             "date_separate": move["date_transaction_picking"] or "",  # Fecha de separación del item
                             # "id_user_separate": user_operator_id,
                             # "user_separate": user_operator_name,
@@ -1074,7 +1074,14 @@ class TransaccionDataPicking(http.Controller):
             batch_ids = batchs.ids
 
             # Consulta masiva de movimientos con filtro de items no completados
-            all_move_unified = request.env["move.line.unified"].sudo().search_read([("stock_picking_batch_id", "in", batch_ids), ("location_id", "in", user_location_ids)], ["id", "product_id", "lot_id", "location_id", "location_dest_id", "product_uom_qty", "is_done_item", "stock_picking_batch_id", "user_operator_id", "date_transaction_picking", "new_observation", "time", "qty_done"])
+            all_move_unified = (
+                request.env["move.line.unified"]
+                .sudo()
+                .search_read(
+                    [("stock_picking_batch_id", "in", batch_ids), ("location_id", "in", user_location_ids)],
+                    ["id", "product_id", "lot_id", "location_id", "location_dest_id", "product_uom_qty", "is_done_item", "stock_picking_batch_id", "user_operator_id", "date_transaction_picking", "new_observation", "time", "qty_done"],
+                )
+            )
 
             # ✅ OPTIMIZACIÓN: Organizar datos por batch y filtrar completados
             moves_by_batch = defaultdict(list)
@@ -1273,9 +1280,9 @@ class TransaccionDataPicking(http.Controller):
                             "pedido": picking_name,
                             "pedido_id": picking_id,
                             "origin": first_picking.get("origin", "") if first_picking else "",
-                            "quantity_separate" : move["qty_done"],
-                            "observation" : move.get("new_observation", ""),
-                            "time_separate" : float(move.get("time", 0)) if move.get("time") else 0.0,
+                            "quantity_separate": move["qty_done"],
+                            "observation": move.get("new_observation", ""),
+                            "time_separate": move.get("time", ""),
                             "date_separate": move.get("date_transaction_picking", ""),
                             "is_separate": 1 if move["is_done_item"] else 0,  # Indica si el item ya fue separado
                         }

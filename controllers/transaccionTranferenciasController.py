@@ -96,7 +96,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "id_move": move.id,
                                 "id_transferencia": picking.id,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -157,7 +157,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
                             "product_id": product.id,
-                            "product_name": product.name,
+                            "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "product_barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",
@@ -344,8 +344,8 @@ class TransaccionTransferenciasController(http.Controller):
                                 "id_transferencia": picking.id,
                                 "batch_id": picking.id,  # ✅
                                 "id_product": product.id,
-                                "product_id": [product.id, product.name],  # ✅
-                                "product_name": product.name,
+                                "product_id": [product.id, product.display_name],  # ✅
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -373,11 +373,11 @@ class TransaccionTransferenciasController(http.Controller):
                                 "origin": picking.origin or "",
                                 "lote_id": move.lot_id.id or 0,
                                 "lote": move.lot_id.name or "",
-                                # "is_done_item": False,
-                                # "date_transaction": "",
-                                # "observation": "",
-                                # "time": 0,
-                                # "user_operator_id": 0,
+                                "is_done_item": False,
+                                "date_transaction": "",
+                                "observation": "",
+                                "time_separate": "",
+                                "user_operator_id": 0,
                                 "expire_date": move.lot_id.expiration_date or "",
                                 "is_separate": 0,
                             }
@@ -411,8 +411,8 @@ class TransaccionTransferenciasController(http.Controller):
                             "id_transferencia": picking.id,
                             "batch_id": picking.id,  # ✅
                             "id_product": product.id,
-                            "product_id": [product.id, product.name],  # ✅
-                            "product_name": product.name,
+                            "product_id": [product.id, product.display_name],  # ✅
+                            "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",
@@ -440,11 +440,13 @@ class TransaccionTransferenciasController(http.Controller):
                             "origin": picking.origin or "",
                             "lote_id": move_line.lot_id.id or "",
                             "lote": move_line.lot_id.name or "",
-                            # "is_done_item": move_line.is_done_item,
-                            # "date_transaction": move_line.date_transaction or "",
-                            # "observation": move_line.new_observation or "",
-                            # "time": move_line.time or 0,
-                            # "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
+                            "quantity_separate": move_line.quantity,
+                            "is_done_item": move_line.is_done_item,
+                            "date_transaction": move_line.date_transaction or "",
+                            "observation": move_line.new_observation or "",
+                            "time_separate": format_time_from_seconds(move_line.time),
+                            "time": move_line.time or 0,
+                            "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
                             "expire_date": move_line.lot_id.expiration_date or "",
                             "is_separate": 1,
                         }
@@ -593,7 +595,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "id_move": move.id,
                                 "id_transferencia": picking.id,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -654,7 +656,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
                             "product_id": product.id,
-                            "product_name": product.name,
+                            "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "product_barcode": product.barcode or "",
                             "product_tracking": product.tracking or "",
@@ -733,7 +735,7 @@ class TransaccionTransferenciasController(http.Controller):
                                 "package_name": pack.name,
                                 "quantity_separate": move_line.quantity,
                                 "id_product": product.id if product else 0,
-                                "product_id": [product.id, product.name],
+                                "product_id": [product.id, product.display_name],
                                 "name_packing": pack.name,
                                 "cantidad_enviada": move_line.quantity,
                                 "unidades": product.uom_id.name if product.uom_id else "UND",
@@ -830,7 +832,7 @@ class TransaccionTransferenciasController(http.Controller):
                     "id_move": move.id,
                     "id_transferencia": transferencia.id,
                     "product_id": product.id,
-                    "product_name": product.name,
+                    "product_name": product.display_name,
                     "product_code": product.default_code or "",
                     "product_barcode": product.barcode or "",
                     "product_tracking": product.tracking or "",
@@ -1862,7 +1864,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "id_move": move.id,
                         "id_transferencia": picking.id,
                         "product_id": product.id,
-                        "product_name": product.name,
+                        "product_name": product.display_name,
                         "product_code": product.default_code or "",
                         "product_barcode": product.barcode or "",
                         "product_tracking": product.tracking or "",
@@ -1917,7 +1919,7 @@ class TransaccionTransferenciasController(http.Controller):
                     "id_move": move_line.id,
                     "id_transferencia": picking.id,
                     "product_id": product.id,
-                    "product_name": product.name,
+                    "product_name": product.display_name,
                     "product_code": product.default_code or "",
                     "product_barcode": product.barcode or "",
                     "product_tracking": product.tracking or "",
@@ -2406,3 +2408,16 @@ def obtener_almacenes_usuario(user):
         return {"code": 400, "msg": "El usuario no tiene acceso a ningún almacén"}
 
     return allowed_warehouses
+
+
+def format_time_from_seconds(time_value):
+    if not time_value:
+        return "00:00:00"
+    try:
+        total_seconds = float(time_value)
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        seconds = int(total_seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    except:
+        return "00:00:00"

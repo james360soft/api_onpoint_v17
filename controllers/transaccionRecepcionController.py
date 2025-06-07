@@ -200,7 +200,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_recepcion": picking.id,
                                 "state": move.state,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -272,7 +272,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_recepcion": picking.id,
                                 "state": move.state,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -315,7 +315,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "state": move_line.state,
                                 "id_recepcion": picking.id,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -543,7 +543,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_recepcion": picking.id,
                                 "state": move.state,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -611,7 +611,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_recepcion": picking.id,
                                 "state": move.state,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -649,7 +649,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_move": move.id,
                                 "id_recepcion": picking.id,
                                 "product_id": product.id,
-                                "product_name": product.name,
+                                "product_name": product.display_name,
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -888,7 +888,7 @@ class TransaccionRecepcionController(http.Controller):
                             # Cambio 7: Usar el state del move o del picking relacionado
                             "state": move.get("state", "assigned"),
                             "product_id": product.id or 0,
-                            "product_name": product.name or "",
+                            "product_name": product.display_name or "",
                             "product_code": product.default_code if product else "",
                             "product_barcode": product.barcode or "",
                             "product_tracking": product.tracking if product else "",
@@ -961,7 +961,7 @@ class TransaccionRecepcionController(http.Controller):
                                 "id_recepcion": batch.id,
                                 "id_batch": batch.id,
                                 "product_id": done_move["product_id"][0] if done_move["product_id"] else 0,
-                                "product_name": product.name or "",
+                                "product_name": product.display_name or "",
                                 "product_code": product.default_code or "",
                                 "product_barcode": product.barcode or "",
                                 "product_tracking": product.tracking or "",
@@ -1122,7 +1122,7 @@ class TransaccionRecepcionController(http.Controller):
                     "id_move": move.id,
                     "id_recepcion": recepcion.id,
                     "product_id": product.id,
-                    "product_name": product.name,
+                    "product_name": product.display_name,
                     "product_code": product.default_code or "",
                     "product_barcode": product.barcode or "",
                     "product_tracking": product.tracking if hasattr(product, "tracking") else "",
@@ -1379,17 +1379,17 @@ class TransaccionRecepcionController(http.Controller):
 
                 move = request.env["stock.move"].sudo().browse(move_id) if move_id else recepcion.move_ids.filtered(lambda m: m.product_id.id == product_id)
                 if not move:
-                    return {"code": 400, "msg": f"El producto {product.name} no está en la recepción"}
+                    return {"code": 400, "msg": f"El producto {product.display_name} no está en la recepción"}
 
                 stock_move = move.sudo()
 
                 lot = None
                 if product.tracking == "lot":
                     if not lote_id:
-                        return {"code": 400, "msg": f"El producto {product.name} requiere un lote"}
+                        return {"code": 400, "msg": f"El producto {product.display_name} requiere un lote"}
                     lot = request.env["stock.lot"].sudo().browse(lote_id)
                     if not lot.exists():
-                        return {"code": 400, "msg": f"Lote no encontrado para el producto {product.name}"}
+                        return {"code": 400, "msg": f"Lote no encontrado para el producto {product.display_name}"}
 
                 # ✅ Eliminar líneas automáticas SOLO en la primera iteración
                 if not lineas_automaticas_borradas:
@@ -1419,7 +1419,7 @@ class TransaccionRecepcionController(http.Controller):
                 array_result.append(
                     {
                         "id": move_line.id,
-                        "producto": product.name,
+                        "producto": product.display_name,
                         "cantidad": cantidad,
                         "lote": lot.name if lot else "",
                         "ubicacion_destino": ubicacion_destino,
@@ -1573,7 +1573,7 @@ class TransaccionRecepcionController(http.Controller):
 
                 # Validar cantidad
                 # if cantidad > move_line.quantity:
-                #     array_result.append({"code": 400, "msg": f"La cantidad {cantidad} no puede ser mayor a la cantidad disponible {move_line.quantity} para el producto {product.name}"})
+                #     array_result.append({"code": 400, "msg": f"La cantidad {cantidad} no puede ser mayor a la cantidad disponible {move_line.quantity} para el producto {product.display_name}"})
                 #     continue
 
                 # Preparar los datos comunes para actualización
@@ -1650,7 +1650,7 @@ class TransaccionRecepcionController(http.Controller):
                 # Agregar información detallada del procesamiento
                 array_result.append(
                     {
-                        "producto": product.name,
+                        "producto": product.display_name,
                         "cantidad": cantidad,
                         "lote": lote_id,
                         "ubicacion_destino": ubicacion_destino,
@@ -2443,7 +2443,7 @@ class TransaccionRecepcionController(http.Controller):
                     "id_recepcion": recepcion.id,
                     "state": move.state,
                     "product_id": product.id,
-                    "product_name": product.name,
+                    "product_name": product.display_name,
                     "product_code": product.default_code or "",
                     "product_barcode": product.barcode or "",
                     "product_tracking": product.tracking or "",
@@ -2477,7 +2477,7 @@ class TransaccionRecepcionController(http.Controller):
                         # "id_move": move.id,
                         "id_recepcion": recepcion.id,
                         "product_id": product.id,
-                        "product_name": product.name,
+                        "product_name": product.display_name,
                         "product_code": product.default_code or "",
                         "product_barcode": product.barcode or "",
                         "product_tracking": product.tracking or "",
