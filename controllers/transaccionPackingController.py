@@ -263,6 +263,7 @@ class TransaccionDataPacking(http.Controller):
                                         "temperatura": move_line.temperature if hasattr(move_line, "temperature") else 0,
                                         "image": f"{base_url}/api/view_imagen_linea_recepcion/{move_line.id}" if getattr(move_line, "imagen", False) else "",
                                         "image_novedad": f"{base_url}/api/view_imagen_observation/{move_line.id}" if getattr(move_line, "imagen_observation", False) else "",
+                                        "time_separate": int(move_line.time_packing) if move_line.time_packing else 0,
                                     }
 
                                     package["lista_productos_in_packing"].append(product_in_packing)

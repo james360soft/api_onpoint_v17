@@ -242,6 +242,7 @@ class TransaccionTransferenciasController(http.Controller):
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", ["PICK"]),
                             ("responsable_id", "in", [user.id, False]),
+                            ("batch_id", "=", False),
                         ]
                     )
                 )
@@ -438,7 +439,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "pedido": picking.name,
                             "pedido_id": picking.id,
                             "origin": picking.origin or "",
-                            "lote_id": move_line.lot_id.id or "",
+                            "lote_id": move_line.lot_id.id or 0,
                             "lote": move_line.lot_id.name or "",
                             "quantity_separate": move_line.quantity,
                             "is_done_item": move_line.is_done_item,
@@ -489,6 +490,8 @@ class TransaccionTransferenciasController(http.Controller):
 
             array_transferencias = []
 
+            base_url = request.httprequest.host_url.rstrip("/")
+
             allowed_warehouses = obtener_almacenes_usuario(user)
             if isinstance(allowed_warehouses, dict) and "code" in allowed_warehouses:
                 return allowed_warehouses
@@ -523,6 +526,7 @@ class TransaccionTransferenciasController(http.Controller):
                             ("picking_type_id.warehouse_id", "=", warehouse.id),
                             ("picking_type_id.sequence_code", "in", [sequence_code]),
                             ("responsable_id", "in", [user.id, False]),
+                            ("batch_id", "=", False),
                         ]
                     )
                 )
@@ -572,7 +576,7 @@ class TransaccionTransferenciasController(http.Controller):
                         "zona_entrega": picking.delivery_zone_id.display_name or "",
                         "numero_paquetes": len(picking.move_line_ids.mapped("result_package_id")),
                         "lista_productos": [],
-                        "lista_productos_enviadas": [],
+                        # "lista_productos_enviadas": [],
                         "lista_paquetes": [],
                     }
 
@@ -593,50 +597,88 @@ class TransaccionTransferenciasController(http.Controller):
                             linea_info = {
                                 "id": move.move_id.id if move.move_id else 0,
                                 "id_move": move.id,
+                                "pedido_id": picking.id,
+                                "batch_id": picking.id,
+                                "picking_id": picking.id,  # ✅
                                 "id_transferencia": picking.id,
-                                "product_id": product.id,
+                                "product_id": [product.id, product.display_name],  # ✅
+                                "id_product": product.id or 0,
                                 "product_name": product.display_name,
                                 "product_code": product.default_code or "",
-                                "product_barcode": product.barcode or "",
-                                "product_tracking": product.tracking or "",
+                                "barcode": product.barcode or "",
+                                "tracking": product.tracking or "",
                                 "dias_vencimiento": product.expiration_time or "",
-                                "other_barcodes": [{"barcode": b.name} for b in getattr(product, "barcode_ids", [])],
                                 "product_packing": [{"barcode": p.barcode, "cantidad": p.qty, "id_product": p.product_id.id, "id_move": move.id, "batch_id": picking.id} for p in getattr(product, "packaging_ids", [])],
+                                "quantity": quantity_done,
                                 "quantity_ordered": quantity_ordered,
                                 "quantity_to_transfer": quantity_ordered,
                                 # "quantity_done": quantity_done,
                                 "cantidad_faltante": cantidad_faltante,
                                 "uom": move.move_id.product_uom.name if move.move_id and move.move_id.product_uom else "UND",
-                                "location_dest_id": move.location_dest_id.id or 0,
-                                "location_dest_name": move.location_dest_id.display_name or "",
-                                "location_dest_barcode": move.location_dest_id.barcode or "",
-                                "location_id": move.location_id.id or 0,
-                                "location_name": move.location_id.display_name or "",
-                                "location_barcode": move.location_id.barcode or "",
+                                "location_dest_id": [
+                                    move.location_dest_id.id,
+                                    move.location_dest_id.display_name,
+                                ],
+                                # "location_dest_name": move.location_dest_id.display_name or "",
+                                "barcode_location_dest": move.location_dest_id.barcode or "",
+                                "location_id": [
+                                    move.location_id.id,
+                                    move.location_id.display_name,
+                                ],
+                                "rimoval_priority": move.location_id.priority_picking_desplay,
+                                # "location_name": move.location_id.display_name or "",
+                                "barcode_location": move.location_id.barcode or "",
                                 "weight": product.weight or 0,
-                                "is_done_item": False,
-                                "date_transaction": "",
-                                "observation": "",
-                                "time": 0,
-                                "user_operator_id": 0,
+                                "unidades": product.uom_id.name if product.uom_id else "UND",
+                                # "is_done_item": False,
+                                # "date_transaction": "",
+                                # "observation": "",
+                                # "time": 0,
+                                # "user_operator_id": 0,
+                                "lot_id": [move.lot_id.id, move.lot_id.name] if move.lot_id else [],
+                                "lote_id": move.lot_id.id or 0,
+                                "expire_date": move.lot_id.expiration_date or "",
+                                "other_barcode": [
+                                    {
+                                        "barcode": barcode.name,
+                                        "batch_id": picking.id,
+                                        "id_move": move.move_id.id if move.move_id else 0,
+                                        "id_product": product.id or 0,
+                                    }
+                                    for barcode in product.barcode_ids
+                                    if barcode.name
+                                ],
+                                "product_packing": [
+                                    {
+                                        "barcode": pack.barcode,
+                                        "cantidad": pack.qty,
+                                        "id_product": pack.product_id.id,
+                                        "id_move": move.id,
+                                        "batch_id": picking.id,
+                                    }
+                                    for pack in product.packaging_ids
+                                    if pack.barcode
+                                ],
+                                "maneja_temperatura": product.temperature_control if hasattr(product, "temperature_control") else False,
+                                "temperatura": move.temperature if hasattr(move, "temperature") else 0,
                             }
 
-                            if move.lot_id:
-                                linea_info.update(
-                                    {
-                                        "lot_id": move.lot_id.id,
-                                        "lot_name": move.lot_id.name,
-                                        "fecha_vencimiento": move.lot_id.expiration_date or "",
-                                    }
-                                )
-                            else:
-                                linea_info.update(
-                                    {
-                                        "lot_id": 0,
-                                        "lot_name": "",
-                                        "fecha_vencimiento": "",
-                                    }
-                                )
+                            # if move.lot_id:
+                            #     linea_info.update(
+                            #         {
+                            #             "lot_id": move.lot_id.id,
+                            #             "lot_name": move.lot_id.name,
+                            #             "fecha_vencimiento": move.lot_id.expiration_date or "",
+                            #         }
+                            #     )
+                            # else:
+                            #     linea_info.update(
+                            #         {
+                            #             "lot_id": 0,
+                            #             "lot_name": "",
+                            #             "fecha_vencimiento": "",
+                            #         }
+                            #     )
 
                             transferencia_info["lista_productos"].append(linea_info)
 
@@ -655,7 +697,8 @@ class TransaccionTransferenciasController(http.Controller):
                             "id": move_line.id,
                             "id_move": move_line.id,
                             "id_transferencia": picking.id,
-                            "product_id": product.id,
+                            "product_id": [product.id, product.display_name],  # ✅
+                            "id_product": product.id or 0,
                             "product_name": product.display_name,
                             "product_code": product.default_code or "",
                             "product_barcode": product.barcode or "",
@@ -680,33 +723,34 @@ class TransaccionTransferenciasController(http.Controller):
                             "observation": move_line.new_observation or "",
                             "time": move_line.time or 0,
                             "user_operator_id": move_line.user_operator_id.id if move_line.user_operator_id else 0,
+                            "lot_id": [move_line.lot_id.id, move_line.lot_id.name] if move_line.lot_id else [],
                         }
 
-                        if move_line.lot_id:
-                            linea_info.update(
-                                {
-                                    "lot_id": move_line.lot_id.id,
-                                    "lot_name": move_line.lot_id.name,
-                                    "fecha_vencimiento": move_line.lot_id.expiration_date or "",
-                                }
-                            )
-                        else:
-                            linea_info.update(
-                                {
-                                    "lot_id": 0,
-                                    "lot_name": "",
-                                    "fecha_vencimiento": "",
-                                }
-                            )
+                        # if move_line.lot_id:
+                        #     linea_info.update(
+                        #         {
+                        #             "lot_id": move_line.lot_id.id,
+                        #             "lot_name": move_line.lot_id.name,
+                        #             "fecha_vencimiento": move_line.lot_id.expiration_date or "",
+                        #         }
+                        #     )
+                        # else:
+                        #     linea_info.update(
+                        #         {
+                        #             "lot_id": 0,
+                        #             "lot_name": "",
+                        #             "fecha_vencimiento": "",
+                        #         }
+                        #     )
 
-                        transferencia_info["lista_productos_enviadas"].append(linea_info)
+                        # transferencia_info["lista_productos_enviadas"].append(linea_info)
 
                     # Obtener los paquetes de la transferencia
                     move_lines_in_picking = picking.move_line_ids.filtered(lambda ml: ml.package_id or ml.result_package_id)
                     unique_packages = move_lines_in_picking.mapped("package_id") + move_lines_in_picking.mapped("result_package_id")
 
                     for pack in unique_packages:
-                        move_lines_in_package = move_lines_in_picking.filtered(lambda ml: (ml.package_id == pack or ml.result_package_id == pack) and ml.is_done_item_pack)
+                        move_lines_in_package = move_lines_in_picking.filtered(lambda ml: (ml.package_id == pack or ml.result_package_id == pack) and ml.is_done_item)
 
                         cantidad_productos = len(move_lines_in_package)
 
@@ -721,6 +765,7 @@ class TransaccionTransferenciasController(http.Controller):
                             "is_certificate": pack.is_certificate,
                             "fecha_creacion": pack.create_date.strftime("%Y-%m-%d") if pack.create_date else "",
                             "fecha_actualizacion": pack.write_date.strftime("%Y-%m-%d") if pack.write_date else "",
+                            "consecutivo": getattr(move_lines_in_package[0], "faber_box_number", "") if move_lines_in_package else "",
                         }
                         transferencia_info["lista_paquetes"].append(package)  # Cambié pedido a transferencia_info para que coincida con tu estructura
 
@@ -741,13 +786,19 @@ class TransaccionTransferenciasController(http.Controller):
                                 "unidades": product.uom_id.name if product.uom_id else "UND",
                                 "peso": product.weight if product else 0,
                                 "lote_id": [lot.id, lot.name if lot else ""] if lot else [],
-                                "observacion": move_line.new_observation_packing,
+                                "observacion": move_line.new_observation or "",
                                 "weight": product.weight if product else 0,
                                 "is_sticker": pack.is_sticker,
                                 "is_certificate": pack.is_certificate,
                                 "id_package": pack.id,
                                 "quantity": move_line.quantity,
                                 "tracking": product.tracking if product else "",
+                                "maneja_temperatura": product.temperature_control if hasattr(product, "temperature_control") else False,
+                                "temperatura": move_line.temperature if hasattr(move_line, "temperature") else 0,
+                                "image": f"{base_url}/api/view_imagen_linea_recepcion/{move_line.id}" if getattr(move_line, "imagen", False) else "",
+                                "image_novedad": f"{base_url}/api/view_imagen_observation/{move_line.id}" if getattr(move_line, "imagen_observation", False) else "",
+                                "time_separate": int(move_line.time) if move_line.time else 0,
+                                "package_consecutivo": move_line.faber_box_number if hasattr(move_line, "faber_box_number") else "",
                             }
 
                             package["lista_productos_in_packing"].append(product_in_packing)
@@ -1243,6 +1294,303 @@ class TransaccionTransferenciasController(http.Controller):
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
 
+    # @http.route("/api/send_transfer/pack", auth="user", type="json", methods=["POST"], csrf=False)
+    # def send_transfer_pack(self, **auth):
+    #     try:
+    #         user = request.env.user
+
+    #         if not user:
+    #             return {"code": 400, "msg": "Usuario no encontrado"}
+
+    #         id_transferencia = auth.get("id_transferencia", 0)
+    #         is_sticker = auth.get("is_sticker", False)
+    #         is_certificate = auth.get("is_certificate", False)
+    #         peso_total_paquete = auth.get("peso_total_paquete", 0)
+    #         list_items = auth.get("list_items", [])
+
+    #         transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)])
+    #         if not transferencia:
+    #             return {"code": 404, "msg": "Transferencia no encontrada"}
+
+    #         # ✅ Crear el paquete manualmente
+    #         pack = (
+    #             request.env["stock.quant.package"]
+    #             .sudo()
+    #             .create(
+    #                 {
+    #                     "is_sticker": is_sticker,
+    #                     "is_certificate": is_certificate,
+    #                 }
+    #             )
+    #         )
+
+    #         array_result = []
+    #         nuevas_lineas_creadas = []
+
+    #         for item in list_items:
+    #             id_move = item.get("id_move")
+    #             id_product = item.get("id_producto")
+    #             cantidad_enviada = item.get("cantidad_enviada", 0)
+    #             id_ubicacion_destino = item.get("id_ubicacion_destino", 0)
+    #             id_ubicacion_origen = item.get("id_ubicacion_origen", 0)
+    #             id_lote = item.get("id_lote", 0)
+    #             id_operario = item.get("id_operario")
+    #             fecha_transaccion = item.get("fecha_transaccion", "")
+    #             time_line = int(item.get("time_line", 0))
+    #             novedad = item.get("observacion", "")
+    #             dividida = item.get("dividida", False)
+
+    #             original_move = request.env["stock.move.line"].sudo().search([("id", "=", id_move)])
+    #             if not original_move:
+    #                 return {"code": 404, "msg": f"Movimiento no encontrado (ID: {id_move})"}
+
+    #             stock_move = original_move.move_id
+
+    #             move_parent = original_move.move_id
+    #             product = request.env["product.product"].sudo().search([("id", "=", id_product)])
+
+    #             if product.tracking == "lot" and not id_lote:
+    #                 return {"code": 400, "msg": "El producto requiere lote y no se ha proporcionado uno"}
+
+    #             fecha = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
+
+    #             novedad_minuscula = novedad.lower()
+    #             if novedad_minuscula != "sin novedad":
+    #                 dividida = True
+
+    #             # if dividida:
+    #             #     update_values = {
+    #             #         "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
+    #             #         "location_dest_id": id_ubicacion_destino,
+    #             #         "location_id": id_ubicacion_origen,
+    #             #         "lot_id": id_lote if id_lote else False,
+    #             #         "is_done_item": True,
+    #             #         "date_transaction": fecha,
+    #             #         "new_observation": novedad,
+    #             #         "time": time_line,
+    #             #         "user_operator_id": id_operario,
+    #             #         "result_package_id": pack.id,
+    #             #     }
+
+    #             #     # Se toma la cantidad de la linea porque sabemos que esa es la que se puede usar o dividir porque es la que el sistema recerbo
+    #             #     cantidad_inicial = original_move.quantity
+
+    #             #     # Actualizamos los datos con lo que nos envian
+    #             #     original_move.sudo().write(update_values)
+
+    #             #     # obtener el consectivo de la caja
+    #             #     consecutivo = original_move.faber_box_number or "Caja1"
+
+    #             #     # sacamos la cantidad que necesitamos para crear una nueva linea, que seria la cantidad inicial menos la enviada entonces asi sabemos bajo que rango podemos dividir una cantidad basado lo recerbado del sistema
+    #             #     cantidad_restante = cantidad_inicial - cantidad_enviada
+
+    #             #     ### NOTA
+    #             #     # Entonces se dividira por linea, la lineas se peude dividir n veces segun la cantidad que haya tenido inciialemnte que seria lo que el sistema recerbo
+
+    #             #     # return {"code": 200, "msg": cantidad_restante, "cantidad_total_enviada": cantidad_total_enviada, "cantidad_demandada": cantidad_demandada}
+    #             #     if cantidad_restante > 0:
+    #             #         linea_restante = (
+    #             #             request.env["stock.move.line"]
+    #             #             .sudo()
+    #             #             .create(
+    #             #                 {
+    #             #                     "move_id": move_parent.id,
+    #             #                     "product_id": id_product,
+    #             #                     "product_uom_id": original_move.product_uom_id.id,
+    #             #                     "location_id": id_ubicacion_origen,
+    #             #                     "location_dest_id": id_ubicacion_destino,
+    #             #                     "quantity": cantidad_restante,
+    #             #                     "lot_id": id_lote if id_lote else False,
+    #             #                     "is_done_item": False,
+    #             #                     "date_transaction": False,
+    #             #                     "new_observation": "",
+    #             #                     "time": 0,
+    #             #                     "user_operator_id": False,
+    #             #                     "picking_id": id_transferencia,
+    #             #                 }
+    #             #             )
+    #             #         )
+
+    #             #         # array_result.append(
+    #             #         #     {
+    #             #         #         "id_move": linea_restante.id,
+    #             #         #         "id_transferencia": id_transferencia,
+    #             #         #         "id_product": linea_restante.product_id.id,
+    #             #         #         "quantity": linea_restante.quantity,
+    #             #         #         "is_done_item": linea_restante.is_done_item,
+    #             #         #         "date_transaction": linea_restante.date_transaction,
+    #             #         #         "new_observation": linea_restante.new_observation,
+    #             #         #         "time_line": linea_restante.time,
+    #             #         #         "user_operator_id": None,
+    #             #         #     }
+    #             #         # )
+
+    #             # else:
+    #             #     update_values = {
+    #             #         "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
+    #             #         "location_dest_id": id_ubicacion_destino,
+    #             #         "location_id": id_ubicacion_origen,
+    #             #         "lot_id": id_lote if id_lote else False,
+    #             #         "is_done_item": True,
+    #             #         "date_transaction": fecha,
+    #             #         "new_observation": novedad,
+    #             #         "time": time_line,
+    #             #         "user_operator_id": id_operario,
+    #             #         "result_package_id": pack.id,
+    #             #     }
+
+    #             #     original_move.sudo().write(update_values)
+
+    #             #     consecutivo = original_move.faber_box_number or "Caja1"
+
+    #             if dividida:
+    #                 cantidad_original = original_move.quantity
+    #                 cantidad_separada = cantidad_enviada
+    #                 cantidad_restante = cantidad_original - cantidad_separada
+
+    #                 if cantidad_restante > 0:
+    #                     # ✅ 1. Restar a la original (mantener la línea original con cantidad restante)
+    #                     original_move.write({"quantity": cantidad_restante})
+
+    #                     # ✅ 2. Copiar la línea original
+    #                     new_line_vals = original_move.copy_data()[0]
+
+    #                     # ✅ 3. Actualizar los datos ANTES de crearla
+    #                     new_line_vals.update(
+    #                         {
+    #                             "quantity": cantidad_separada,
+    #                             "location_dest_id": id_ubicacion_destino,
+    #                             "location_id": id_ubicacion_origen,
+    #                             "lot_id": id_lote if id_lote else False,
+    #                             "result_package_id": pack.id,
+    #                             "new_observation": novedad,
+    #                             "user_operator_id": id_operario,
+    #                             "date_transaction": fecha,
+    #                             "time": time_line,
+    #                             "is_done_item": True,
+    #                         }
+    #                     )
+
+    #                     # ✅ 4. Crear la línea nueva con los valores actualizados
+    #                     new_line = request.env["stock.move.line"].sudo().create(new_line_vals)
+
+    #                     consecutivo = new_line.faber_box_number or "Caja1"
+
+    #                     # ✅ Agregar la información de la nueva línea procesada al resultado
+    #                     nuevas_lineas_creadas.append(
+    #                         {
+    #                             "id_move_original": id_move,  # ID de la línea que se mantuvo con cantidad restante
+    #                             "id_move_procesada": new_line.id,  # ID de la nueva línea creada y procesada
+    #                             "id_transferencia": id_transferencia,
+    #                             "id_product": new_line.product_id.id,
+    #                             "product_name": new_line.product_id.name,
+    #                             "cantidad_procesada": new_line.quantity,
+    #                             "cantidad_restante_original": cantidad_restante,
+    #                             "location_id": new_line.location_id.id,
+    #                             "location_dest_id": new_line.location_dest_id.id,
+    #                             "lot_id": new_line.lot_id.id if new_line.lot_id else False,
+    #                             "lot_name": new_line.lot_id.name if new_line.lot_id else "",
+    #                             "is_done_item": new_line.is_done_item,
+    #                             "consecutivo": consecutivo,
+    #                             "observacion": novedad,
+    #                             "operario_id": id_operario,
+    #                             "fecha_transaccion": fecha_transaccion,
+    #                             "time_line": time_line,
+    #                         }
+    #                     )
+
+    #                 else:
+    #                     # Si no hay cantidad restante, procesar la línea original completa
+    #                     update_values = {
+    #                         "quantity": cantidad_enviada,
+    #                         "location_dest_id": id_ubicacion_destino,
+    #                         "location_id": id_ubicacion_origen,
+    #                         "lot_id": id_lote if id_lote else False,
+    #                         "is_done_item": True,
+    #                         "date_transaction": fecha,
+    #                         "new_observation": novedad,
+    #                         "time": time_line,
+    #                         "user_operator_id": id_operario,
+    #                         "result_package_id": pack.id,
+    #                     }
+    #                     original_move.sudo().write(update_values)
+    #                     consecutivo = original_move.faber_box_number or "Caja1"
+
+    #             else:
+    #                 # Procesar sin división
+    #                 update_values = {
+    #                     "quantity": cantidad_enviada,
+    #                     "location_dest_id": id_ubicacion_destino,
+    #                     "location_id": id_ubicacion_origen,
+    #                     "lot_id": id_lote if id_lote else False,
+    #                     "is_done_item": True,
+    #                     "date_transaction": fecha,
+    #                     "new_observation": novedad,
+    #                     "time": time_line,
+    #                     "user_operator_id": id_operario,
+    #                     "result_package_id": pack.id,
+    #                 }
+    #                 original_move.sudo().write(update_values)
+    #                 consecutivo = original_move.faber_box_number or "Caja1"
+
+    #                 # array_result.append(
+    #                 #     {
+    #                 #         "id_paquete": pack.id,
+    #                 #         "name_paquete": pack.name,
+    #                 #         "id_batch": pack.id,
+    #                 #         "cantidad_productos_en_el_paquete": len(list_items),
+    #                 #         "is_sticker": is_sticker,
+    #                 #         "is_certificate": is_certificate,
+    #                 #         "peso": peso_total_paquete,
+    #                 #         "list_item": list_items,
+    #                 #         # "id_move": original_move.id,
+    #                 #         # "id_transferencia": id_transferencia,
+    #                 #         # "id_product": original_move.product_id.id,
+    #                 #         # "quantity": original_move.quantity,
+    #                 #         # "is_done_item": original_move.is_done_item,
+    #                 #         # "date_transaction": original_move.date_transaction,
+    #                 #         # "new_observation": original_move.new_observation,
+    #                 #         # "time_line": original_move.time,
+    #                 #         # "user_operator_id": original_move.user_operator_id.id,
+    #                 #     }
+    #                 # )
+    #         array_result.append(
+    #             {
+    #                 "id_paquete": pack.id,
+    #                 "name_paquete": pack.name,
+    #                 "id_batch": pack.id,
+    #                 "cantidad_productos_en_el_paquete": len(list_items),
+    #                 "is_sticker": is_sticker,
+    #                 "is_certificate": is_certificate,
+    #                 "peso": peso_total_paquete,
+    #                 "consecutivo": consecutivo,
+    #                 "list_item": list_items,
+    #                 "nuevas_lineas_division": nuevas_lineas_creadas,
+    #                 # "id_move": original_move.id,
+    #                 # "id_transferencia": id_transferencia,
+    #                 # "id_product": original_move.product_id.id,
+    #                 # "quantity": original_move.quantity,
+    #                 # "is_done_item": original_move.is_done_item,
+    #                 # "date_transaction": original_move.date_transaction,
+    #                 # "new_observation": original_move.new_observation,
+    #                 # "time_line": original_move.time,
+    #                 # "user_operator_id": original_move.user_operator_id.id,
+    #             }
+    #         )
+
+    #         # lineas_con_operario = transferencia.move_line_ids.filtered(lambda l: l.user_operator_id and l.is_done_item)
+    #         # if not lineas_con_operario:
+    #         #     transferencia.move_line_ids.filtered(lambda l: not l.user_operator_id and not l.is_done_item).unlink()
+
+    #         transferencia.action_generate_box_numbers()
+
+    #         return {"code": 200, "result": array_result}
+
+    #     except AccessError as e:
+    #         return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
+    #     except Exception as err:
+    #         return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
+
     @http.route("/api/send_transfer/pack", auth="user", type="json", methods=["POST"], csrf=False)
     def send_transfer_pack(self, **auth):
         try:
@@ -1274,6 +1622,7 @@ class TransaccionTransferenciasController(http.Controller):
             )
 
             array_result = []
+            nuevas_lineas_creadas = []
 
             for item in list_items:
                 id_move = item.get("id_move")
@@ -1292,9 +1641,6 @@ class TransaccionTransferenciasController(http.Controller):
                 if not original_move:
                     return {"code": 404, "msg": f"Movimiento no encontrado (ID: {id_move})"}
 
-                stock_move = original_move.move_id
-
-                move_parent = original_move.move_id
                 product = request.env["product.product"].sudo().search([("id", "=", id_product)])
 
                 if product.tracking == "lot" and not id_lote:
@@ -1302,77 +1648,84 @@ class TransaccionTransferenciasController(http.Controller):
 
                 fecha = procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc)
 
-                noveda_minuscula = novedad.lower()
-                if "pendiente" in noveda_minuscula or "pendientes" in noveda_minuscula:
-                    dividida = False
+                novedad_minuscula = novedad.lower()
+                if novedad_minuscula != "sin novedad":
+                    dividida = True
 
                 if dividida:
-                    update_values = {
-                        "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
-                        "location_dest_id": id_ubicacion_destino,
-                        "location_id": id_ubicacion_origen,
-                        "lot_id": id_lote if id_lote else False,
-                        "is_done_item": True,
-                        "date_transaction": fecha,
-                        "new_observation": novedad,
-                        "time": time_line,
-                        "user_operator_id": id_operario,
-                        "result_package_id": pack.id,
-                    }
+                    cantidad_original = original_move.quantity
+                    cantidad_separada = cantidad_enviada
+                    cantidad_restante = cantidad_original - cantidad_separada
 
-                    # Se toma la cantidad de la linea porque sabemos que esa es la que se puede usar o dividir porque es la que el sistema recerbo
-                    cantidad_inicial = original_move.quantity
-
-                    # Actualizamos los datos con lo que nos envian
-                    original_move.sudo().write(update_values)
-
-                    # sacamos la cantidad que necesitamos para crear una nueva linea, que seria la cantidad inicial menos la enviada entonces asi sabemos bajo que rango podemos dividir una cantidad basado lo recerbado del sistema
-                    cantidad_restante = cantidad_inicial - cantidad_enviada
-
-                    ### NOTA
-                    # Entonces se dividira por linea, la lineas se peude dividir n veces segun la cantidad que haya tenido inciialemnte que seria lo que el sistema recerbo
-
-                    # return {"code": 200, "msg": cantidad_restante, "cantidad_total_enviada": cantidad_total_enviada, "cantidad_demandada": cantidad_demandada}
                     if cantidad_restante > 0:
-                        linea_restante = (
-                            request.env["stock.move.line"]
-                            .sudo()
-                            .create(
-                                {
-                                    "move_id": move_parent.id,
-                                    "product_id": id_product,
-                                    "product_uom_id": original_move.product_uom_id.id,
-                                    "location_id": id_ubicacion_origen,
-                                    "location_dest_id": id_ubicacion_destino,
-                                    "quantity": cantidad_restante,
-                                    "lot_id": id_lote if id_lote else False,
-                                    "is_done_item": False,
-                                    "date_transaction": False,
-                                    "new_observation": "",
-                                    "time": 0,
-                                    "user_operator_id": False,
-                                    "picking_id": id_transferencia,
-                                }
-                            )
-                        )
+                        # ✅ 1. Restar a la original (mantener la línea original con cantidad restante)
+                        original_move.write({"quantity": cantidad_restante})
 
-                        array_result.append(
+                        # ✅ 2. Copiar la línea original
+                        new_line_vals = original_move.copy_data()[0]
+
+                        # ✅ 3. Actualizar los datos ANTES de crearla
+                        new_line_vals.update(
                             {
-                                "id_move": linea_restante.id,
-                                "id_transferencia": id_transferencia,
-                                "id_product": linea_restante.product_id.id,
-                                "quantity": linea_restante.quantity,
-                                "is_done_item": linea_restante.is_done_item,
-                                "date_transaction": linea_restante.date_transaction,
-                                "new_observation": linea_restante.new_observation,
-                                "time_line": linea_restante.time,
-                                "user_operator_id": None,
+                                "quantity": cantidad_separada,
+                                "location_dest_id": id_ubicacion_destino,
+                                "location_id": id_ubicacion_origen,
+                                "lot_id": id_lote if id_lote else False,
+                                "result_package_id": pack.id,
+                                "new_observation": novedad,
+                                "user_operator_id": id_operario,
+                                "date_transaction": fecha,
+                                "time": time_line,
+                                "is_done_item": True,
                             }
                         )
 
+                        # ✅ 4. Crear la línea nueva con los valores actualizados
+                        new_line = request.env["stock.move.line"].sudo().create(new_line_vals)
+
+                        # ✅ Guardar información básica de la nueva línea (sin consecutivo aún)
+                        nuevas_lineas_creadas.append(
+                            {
+                                "id_move_original": id_move,  # ID de la línea que se mantuvo con cantidad restante
+                                "id_move_procesada": new_line.id,  # ID de la nueva línea creada y procesada
+                                "id_transferencia": id_transferencia,
+                                "id_product": new_line.product_id.id,
+                                "product_name": new_line.product_id.name,
+                                "cantidad_procesada": new_line.quantity,
+                                "cantidad_restante_original": cantidad_restante,
+                                "location_id": new_line.location_id.id,
+                                "location_dest_id": new_line.location_dest_id.id,
+                                "lot_id": new_line.lot_id.id if new_line.lot_id else False,
+                                "lot_name": new_line.lot_id.name if new_line.lot_id else "",
+                                "is_done_item": new_line.is_done_item,
+                                "observacion": novedad,
+                                "operario_id": id_operario,
+                                "fecha_transaccion": fecha_transaccion,
+                                "time_line": time_line,
+                                "new_line_obj": new_line,  # ✅ Guardamos el objeto para obtener el consecutivo después
+                            }
+                        )
+
+                    else:
+                        # Si no hay cantidad restante, procesar la línea original completa
+                        update_values = {
+                            "quantity": cantidad_enviada,
+                            "location_dest_id": id_ubicacion_destino,
+                            "location_id": id_ubicacion_origen,
+                            "lot_id": id_lote if id_lote else False,
+                            "is_done_item": True,
+                            "date_transaction": fecha,
+                            "new_observation": novedad,
+                            "time": time_line,
+                            "user_operator_id": id_operario,
+                            "result_package_id": pack.id,
+                        }
+                        original_move.sudo().write(update_values)
+
                 else:
+                    # Procesar sin división
                     update_values = {
-                        "quantity": cantidad_enviada,  # ← este es el bueno en Odoo 17
+                        "quantity": cantidad_enviada,
                         "location_dest_id": id_ubicacion_destino,
                         "location_id": id_ubicacion_origen,
                         "lot_id": id_lote if id_lote else False,
@@ -1383,36 +1736,43 @@ class TransaccionTransferenciasController(http.Controller):
                         "user_operator_id": id_operario,
                         "result_package_id": pack.id,
                     }
-
                     original_move.sudo().write(update_values)
 
-                    array_result.append(
-                        {
-                            "id_paquete": pack.id,
-                            "name_paquete": pack.name,
-                            "id_batch": pack.id,
-                            "cantidad_productos_en_el_paquete": len(list_items),
-                            "is_sticker": is_sticker,
-                            "is_certificate": is_certificate,
-                            "peso": peso_total_paquete,
-                            "list_item": list_items,
-                            # "id_move": original_move.id,
-                            # "id_transferencia": id_transferencia,
-                            # "id_product": original_move.product_id.id,
-                            # "quantity": original_move.quantity,
-                            # "is_done_item": original_move.is_done_item,
-                            # "date_transaction": original_move.date_transaction,
-                            # "new_observation": original_move.new_observation,
-                            # "time_line": original_move.time,
-                            # "user_operator_id": original_move.user_operator_id.id,
-                        }
-                    )
+            # ✅ ALTERNATIVA SIMPLE: Llamar explícitamente action_generate_box_numbers
+            # para asegurar que todas las líneas tengan su faber_box_number
+            transferencia.action_generate_box_numbers()
 
-            # lineas_con_operario = transferencia.move_line_ids.filtered(lambda l: l.user_operator_id and l.is_done_item)
-            # if not lineas_con_operario:
-            #     transferencia.move_line_ids.filtered(lambda l: not l.user_operator_id and not l.is_done_item).unlink()
+            # ✅ Obtener el consecutivo después de generar los números de caja
+            consecutivo = "Caja1"  # valor por defecto
+            primera_linea_del_paquete = transferencia.move_line_ids.filtered(lambda l: l.result_package_id and l.result_package_id.id == pack.id)
+            if primera_linea_del_paquete:
+                consecutivo = primera_linea_del_paquete[0].faber_box_number or "Caja1"
 
-            # stock_move.sudo().write({"picked": True})
+            # ✅ Actualizar el consecutivo en las nuevas líneas creadas
+            for nueva_linea in nuevas_lineas_creadas:
+                if "new_line_obj" in nueva_linea:
+                    # Obtener el faber_box_number de la línea creada
+                    line_obj = nueva_linea["new_line_obj"]
+                    nueva_linea["consecutivo"] = line_obj.faber_box_number or consecutivo
+                    # Remover el objeto de la respuesta
+                    del nueva_linea["new_line_obj"]
+                else:
+                    nueva_linea["consecutivo"] = consecutivo
+
+            array_result.append(
+                {
+                    "id_paquete": pack.id,
+                    "name_paquete": pack.name,
+                    "id_batch": pack.id,
+                    "cantidad_productos_en_el_paquete": len(list_items),
+                    "is_sticker": is_sticker,
+                    "is_certificate": is_certificate,
+                    "peso": peso_total_paquete,
+                    "consecutivo": consecutivo,
+                    "list_item": list_items,
+                    # "nuevas_lineas_division": nuevas_lineas_creadas,
+                }
+            )
 
             return {"code": 200, "result": array_result}
 
@@ -1511,81 +1871,6 @@ class TransaccionTransferenciasController(http.Controller):
             return {"code": 403, "msg": f"Acceso denegado: {str(e)}"}
         except Exception as err:
             return {"code": 400, "msg": f"Error inesperado: {str(err)}"}
-
-    ## POST Completar transferencia
-    # @http.route("/api/complete_transfer", auth="user", type="json", methods=["POST"], csrf=False)
-    # def completar_transferencia(self, **auth):
-    #     try:
-    #         user = request.env.user
-    #         # ✅ Validar usuario
-    #         if not user:
-    #             return {"code": 400, "msg": "Usuario no encontrado"}
-
-    #         id_transferencia = auth.get("id_transferencia", 0)
-    #         crear_backorder = auth.get("crear_backorder", True)
-
-    #         transferencia = request.env["stock.picking"].sudo().search([("id", "=", id_transferencia)], limit=1)
-
-    #         if not transferencia:
-    #             return {"code": 400, "msg": f"Transferencia no encontrada o ya completada con ID {id_transferencia}"}
-
-    #         # Eliminar las lineas que no se tiene is_done_item true
-    #         lineas_no_enviadas = transferencia.move_line_ids.filtered(lambda l: not l.is_done_item)
-    #         if lineas_no_enviadas:
-    #             lineas_no_enviadas.unlink()
-
-    #         # Intentar validar la Transferencia
-    #         result = transferencia.sudo().button_validate()
-
-    #         # Si el resultado es un diccionario, significa que se requiere acción adicional (un wizard)
-    #         if isinstance(result, dict) and result.get("res_model"):
-    #             wizard_model = result.get("res_model")
-
-    #             # Para asistente de backorder
-    #             if wizard_model == "stock.backorder.confirmation":
-    #                 # Crear el wizard con los valores del contexto
-    #                 wizard_context = result.get("context", {})
-
-    #                 # Crear el asistente con los valores correctos según tu JSON
-    #                 # En Odoo 17, la forma de enlazar registros sigue siendo la misma
-    #                 wizard_vals = {"pick_ids": [(4, id_transferencia)], "show_transfers": wizard_context.get("default_show_transfers", False)}
-
-    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create(wizard_vals)
-
-    #                 # Procesar según la opción de crear_backorder
-    #                 if crear_backorder:
-    #                     # En Odoo 17, el método process sigue existiendo
-    #                     data = wizard.sudo().process()
-    #                     if data.get("res_model"):
-    #                         return {"code": 400, "msg": data.get("res_model")}
-
-    #                     return {"code": 200, "msg": f"Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": wizard.id if wizard else False}
-    #                     # return {"code": 200, "msg": "Transferencia procesada con backorder", "original_id": transferencia.id, "original_state": transferencia.state, "backorder_id": backorder.id if backorder else False}
-    #                 else:
-    #                     # En Odoo 17, el método process_cancel_backorder sigue existiendo
-    #                     data = wizard.sudo().process_cancel_backorder()
-    #                     if data.get("res_model"):
-    #                         return {"code": 400, "msg": data.get("res_model")}
-
-    #                     return {"code": 200, "msg": "Transferencia parcial completada sin crear backorder"}
-
-    #             # Para asistente de transferencia inmediata
-    #             elif wizard_model == "stock.immediate.transfer":
-    #                 wizard_context = result.get("context", {})
-    #                 wizard = request.env[wizard_model].sudo().with_context(**wizard_context).create({"pick_ids": [(4, id_transferencia)]})
-
-    #                 wizard.sudo().process()
-    #                 return {"code": 200, "msg": "Transferencia procesada con transferencia inmediata"}
-
-    #             else:
-    #                 return {"code": 400, "msg": f"Se requiere un asistente no soportado: {wizard_model}"}
-
-    #         # Si llegamos aquí, button_validate completó la validación sin necesidad de asistentes
-    #         return {"code": 200, "msg": "Transferencia completada correctamente"}
-
-    #     except Exception as e:
-    #         # Registrar el error completo para depuración
-    #         return {"code": 500, "msg": f"Error interno: {str(e)}"}
 
     @http.route("/api/complete_transfer", auth="user", type="json", methods=["POST"], csrf=False)
     def completar_transferencia(self, **auth):
@@ -2266,9 +2551,49 @@ class TransaccionTransferenciasController(http.Controller):
             if not product.exists():
                 return {"code": 404, "msg": "Producto no encontrado"}
 
-            available_stock = product.with_context(location=id_ubicacion_origen).qty_available
-            if available_stock < cantidad_enviada:
-                return {"code": 400, "msg": f"Stock insuficiente en origen. Disponible: {available_stock}"}
+            # ===== VALIDACIÓN DE STOCK REAL DISPONIBLE =====
+            def validar_stock_disponible(product_id, location_id, cantidad_requerida, lote_id=None):
+                """
+                Valida el stock real disponible en una ubicación específica
+                considerando lo que está a la mano menos lo reservado
+                """
+                domain = [("product_id", "=", product_id), ("location_id", "=", location_id), ("quantity", ">", 0)]  # Solo quants con cantidad positiva
+
+                # Si hay lote específico, filtrar por él
+                if lote_id:
+                    domain.append(("lot_id", "=", lote_id))
+
+                # Buscar todos los quants en la ubicación
+                quants = request.env["stock.quant"].sudo().search(domain)
+
+                stock_disponible = 0
+                stock_total = 0
+                stock_reservado = 0
+
+                for quant in quants:
+                    stock_total += quant.quantity
+                    stock_reservado += quant.reserved_quantity
+                    # Stock disponible = cantidad total - cantidad reservada
+                    stock_disponible += quant.quantity - quant.reserved_quantity
+
+                return {"stock_disponible": stock_disponible, "stock_total": stock_total, "stock_reservado": stock_reservado, "es_suficiente": stock_disponible >= cantidad_requerida}
+
+            # Validar stock disponible
+            validacion_stock = validar_stock_disponible(product_id=id_producto, location_id=id_ubicacion_origen, cantidad_requerida=cantidad_enviada, lote_id=id_lote)
+
+            ubicacion_origine = request.env["stock.location"].sudo().browse(id_ubicacion_origen)
+
+            if not validacion_stock["es_suficiente"]:
+                return {
+                    "code": 400,
+                    "msg": (
+                        f"Stock insuficiente en la ubicación de origen: {ubicacion_origine.display_name}. "
+                        f"Cantidad solicitada: {cantidad_enviada}. "
+                        f"Disponible: {validacion_stock['stock_disponible']} "
+                        f"(Total: {validacion_stock['stock_total']}, "
+                        f"Reservado: {validacion_stock['stock_reservado']})."
+                    ),
+                }
 
             # Buscar tipo de picking interno
             picking_type = request.env["stock.picking.type"].sudo().search([("warehouse_id", "=", id_almacen), ("code", "=", "internal")], limit=1)
@@ -2309,37 +2634,65 @@ class TransaccionTransferenciasController(http.Controller):
                 )
             )
 
-            # Confirmar y asignar
+            # 1. CONFIRMAR (esto creará las move lines automáticamente)
             try:
                 picking.action_confirm()
             except Exception as e:
                 return {"code": 500, "msg": f"Error al confirmar la transferencia: {str(e)}"}
 
-            try:
-                picking.action_assign()
-            except Exception as e:
-                return {"code": 500, "msg": f"Error al comprobar disponibilidad: {str(e)}"}
+            # 2. BUSCAR Y MODIFICAR LA MOVE LINE EXISTENTE
+            existing_move_line = request.env["stock.move.line"].sudo().search([("move_id", "=", move.id), ("picking_id", "=", picking.id)], limit=1)
 
-            move_line = move.move_line_ids and move.move_line_ids[0] or False
-
-            if move_line:
-                move_line_vals = {
+            if existing_move_line:
+                # Actualizar la línea existente con tus datos personalizados
+                update_vals = {
+                    "quantity": cantidad_enviada,
                     "user_operator_id": id_responsable or user.id,
                     "new_observation": observacion,
                     "is_done_item": True,
                     "time": time_line,
                     "date_transaction": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
-                    "quantity": cantidad_enviada,
+                }
+
+                # Solo agregar lote si existe
+                if id_lote:
+                    update_vals["lot_id"] = id_lote
+
+                existing_move_line.write(update_vals)
+                move_line = existing_move_line
+            else:
+                # Si por alguna razón no se creó automáticamente, crear manualmente
+                move_line_vals = {
+                    "move_id": move.id,
+                    "picking_id": picking.id,
+                    "product_id": product.id,
+                    "product_uom_id": product.uom_id.id,
                     "location_id": id_ubicacion_origen,
                     "location_dest_id": id_ubicacion_destino,
+                    "quantity": cantidad_enviada,
+                    "user_operator_id": id_responsable or user.id,
+                    "new_observation": observacion,
+                    "is_done_item": True,
+                    "time": time_line,
+                    "date_transaction": procesar_fecha_naive(fecha_transaccion, "America/Bogota") if fecha_transaccion else datetime.now(pytz.utc),
                 }
 
                 if id_lote:
                     move_line_vals["lot_id"] = id_lote
 
-                move_line.sudo().write(move_line_vals)
+                move_line = request.env["stock.move.line"].sudo().create(move_line_vals)
 
-            # Validar
+            # 3. ASIGNAR (ya debería estar asignado después de action_confirm, pero asegurar estado)
+            try:
+                # Verificar que esté en estado asignado
+                if picking.state != "assigned":
+                    picking.state = "assigned"
+                if move.state != "assigned":
+                    move.state = "assigned"
+            except Exception as e:
+                return {"code": 500, "msg": f"Error al asignar: {str(e)}"}
+
+            # 4. VALIDAR la transferencia
             try:
                 picking.button_validate()
             except Exception as e:
@@ -2362,8 +2715,11 @@ class TransaccionTransferenciasController(http.Controller):
                 "user_operator_id": move_line.user_operator_id.id if hasattr(move_line, "user_operator_id") else 0,
                 "user_operator_name": move_line.user_operator_id.name if hasattr(move_line, "user_operator_id") else "",
                 "id_lote": move_line.lot_id.id if move_line and move_line.lot_id else 0,
-                "available_stock": available_stock,
-                "cantidad_disponible": product.qty_available,
+                # Información detallada del stock
+                "stock_total": validacion_stock["stock_total"],
+                "stock_reservado": validacion_stock["stock_reservado"],
+                "stock_disponible": validacion_stock["stock_disponible"],
+                "cantidad_disponible": product.qty_available,  # Para compatibilidad
                 "ubicacion_origen_id": id_ubicacion_origen,
                 "ubicacion_destino_id": id_ubicacion_destino,
             }
