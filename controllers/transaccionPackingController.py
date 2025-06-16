@@ -232,6 +232,7 @@ class TransaccionDataPacking(http.Controller):
                                     "is_certificate": pack.is_certificate,
                                     "fecha_creacion": pack.create_date.strftime("%Y-%m-%d") if pack.create_date else "",
                                     "fecha_actualizacion": pack.write_date.strftime("%Y-%m-%d") if pack.write_date else "",
+                                    "consecutivo": getattr(move_lines_in_package[0], "faber_box_number", "") if move_lines_in_package else "",
                                 }
                                 pedido["lista_paquetes"].append(package)
 
@@ -264,6 +265,7 @@ class TransaccionDataPacking(http.Controller):
                                         "image": f"{base_url}/api/view_imagen_linea_recepcion/{move_line.id}" if getattr(move_line, "imagen", False) else "",
                                         "image_novedad": f"{base_url}/api/view_imagen_observation/{move_line.id}" if getattr(move_line, "imagen_observation", False) else "",
                                         "time_separate": int(move_line.time_packing) if move_line.time_packing else 0,
+                                        "package_consecutivo": move_line.faber_box_number if hasattr(move_line, "faber_box_number") else "",
                                     }
 
                                     package["lista_productos_in_packing"].append(product_in_packing)
@@ -334,6 +336,8 @@ class TransaccionDataPacking(http.Controller):
 
             array_msg = []
 
+            nuevas_lineas_creadas = []
+
             # ✅ Validar si el id_batch existe
             batch = request.env["stock.picking.batch"].sudo().browse(id_batch)
             if not batch.exists():
@@ -351,6 +355,8 @@ class TransaccionDataPacking(http.Controller):
                 )
             )
 
+            pickings_procesados = set()
+
             for move in list_item:
                 product_id = move.get("product_id")
                 location_id = move.get("location_id")
@@ -366,6 +372,8 @@ class TransaccionDataPacking(http.Controller):
                 move_line = request.env["stock.move.line"].sudo().browse(id_move)
 
                 if move_line.exists():
+                    pickings_procesados.add(move_line.picking_id)
+
                     if move_line.quantity >= cantidad_separada:
 
                         if observacion.lower() != "sin novedad":
@@ -404,6 +412,16 @@ class TransaccionDataPacking(http.Controller):
                             new_line = request.env["stock.move.line"].sudo().create(new_line_vals)
 
                             new_line.write({"is_done_item_pack": True})
+
+                            nuevas_lineas_creadas.append(
+                                {
+                                    "id_move_original": id_move,
+                                    "id_move_procesada": new_line.id,
+                                    "cantidad_procesada": cantidad_separada,
+                                    "cantidad_restante": cantidad_original - cantidad_separada,
+                                    "new_line_obj": new_line,  # Para obtener consecutivo después
+                                }
+                            )
 
                         else:
                             # ✅ Asignar directamente al paquete si no hay división
@@ -445,6 +463,28 @@ class TransaccionDataPacking(http.Controller):
                         }
                     )
 
+            # ✅ CORREGIDO: Generar números de caja para TODOS los pickings únicos procesados
+            batch.action_generate_box_numbers()
+
+            # ✅ CORREGIDO: Obtener el consecutivo del primer picking que contenga líneas del paquete
+            consecutivo = "Caja1"  # valor por defecto
+            primera_linea_del_paquete = None
+
+            for picking in pickings_procesados:
+                lineas_del_paquete = picking.move_line_ids.filtered(lambda l: l.result_package_id and l.result_package_id.id == pack.id)
+                if lineas_del_paquete:
+                    primera_linea_del_paquete = lineas_del_paquete[0]
+                    consecutivo = primera_linea_del_paquete.faber_box_number or "Caja1"
+                    break  # Tomar el consecutivo del primer picking que tenga líneas del paquete
+
+            # ✅ NUEVO: Actualizar consecutivo en las nuevas líneas creadas
+            for nueva_linea in nuevas_lineas_creadas:
+                if "new_line_obj" in nueva_linea:
+                    line_obj = nueva_linea["new_line_obj"]
+                    nueva_linea["consecutivo"] = line_obj.faber_box_number or consecutivo
+                    # Remover el objeto de la respuesta
+                    del nueva_linea["new_line_obj"]
+
             array_msg.append(
                 {
                     "id_paquete": pack.id,
@@ -454,6 +494,7 @@ class TransaccionDataPacking(http.Controller):
                     "is_sticker": is_sticker,
                     "is_certificate": is_certificate,
                     "peso": peso_total_paquete,
+                    "consecutivo": consecutivo,  # ✅ NUEVO: Consecutivo correcto
                     "list_item": list_item,
                 }
             )
